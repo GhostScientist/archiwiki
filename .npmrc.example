@@ -1,0 +1,47 @@
+# npm Registry Configuration
+# Copy this file to .npmrc and update with your settings
+
+# ============================================
+# Option 1: Public npm Registry (default)
+# ============================================
+# No configuration needed - publishes to npmjs.com
+# Run: ./scripts/publish.sh --public
+
+# ============================================
+# Option 2: Private npm Registry
+# ============================================
+# Uncomment and configure for your private registry:
+
+# GitHub Packages
+# @your-org:registry=https://npm.pkg.github.com
+# //npm.pkg.github.com/:_authToken=${NPM_TOKEN}
+
+# GitLab Packages
+# @your-org:registry=https://gitlab.com/api/v4/projects/PROJECT_ID/packages/npm/
+# //gitlab.com/api/v4/projects/PROJECT_ID/packages/npm/:_authToken=${NPM_TOKEN}
+
+# Artifactory
+# registry=https://your-company.jfrog.io/artifactory/api/npm/npm-local/
+# //your-company.jfrog.io/artifactory/api/npm/npm-local/:_authToken=${NPM_TOKEN}
+
+# Verdaccio (self-hosted)
+# registry=http://localhost:4873/
+# //localhost:4873/:_authToken=${NPM_TOKEN}
+
+# AWS CodeArtifact
+# registry=https://your-domain-123456789.d.codeartifact.region.amazonaws.com/npm/your-repo/
+# //your-domain-123456789.d.codeartifact.region.amazonaws.com/npm/your-repo/:_authToken=${CODEARTIFACT_AUTH_TOKEN}
+
+# ============================================
+# Scoped Package Configuration
+# ============================================
+# To publish under a scope (e.g., @mycompany/archiwiki):
+# 1. Update package.json "name" to "@mycompany/archiwiki"
+# 2. Configure scope registry above
+
+# ============================================
+# Authentication
+# ============================================
+# Set NPM_TOKEN environment variable or use npm login:
+#   export NPM_TOKEN=your-token-here
+#   npm login --registry=https://your-registry.com

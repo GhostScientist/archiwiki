@@ -1,0 +1,77 @@
+{
+  "name": "code-audit",
+  "description": "Comprehensive code audit for technical debt, security issues, and modernization opportunities",
+  "arguments": [
+    {
+      "name": "path",
+      "type": "path",
+      "required": true,
+      "description": "Path to codebase directory to audit"
+    },
+    {
+      "name": "output",
+      "type": "path",
+      "default": "./audit-report-{{timestamp}}.md",
+      "description": "Output path for audit report"
+    },
+    {
+      "name": "focus",
+      "type": "string",
+      "required": false,
+      "description": "Focus area: security, performance, maintainability, or all"
+    }
+  ],
+  "workflow": {
+    "steps": [
+      {
+        "name": "scan_files",
+        "tool": "find_files",
+        "input": "{{path}}/**/*.{js,ts,jsx,tsx,py,java,go,rb}",
+        "output": "{{$files}}"
+      },
+      {
+        "name": "analyze_structure",
+        "prompt": "Analyze the file structure of this codebase. Identify: 1) Architecture pattern, 2) Technology stack, 3) Potential organizational issues.",
+        "output": "{{$structure}}"
+      },
+      {
+        "name": "search_deprecated",
+        "tool": "search_files",
+        "input": {
+          "path": "{{path}}",
+          "pattern": "(TODO|FIXME|HACK|XXX|deprecated|legacy)"
+        },
+        "output": "{{$issues}}",
+        "onError": "continue"
+      },
+      {
+        "name": "security_scan",
+        "prompt": "Review the codebase for common security issues: 1) SQL injection vulnerabilities, 2) XSS risks, 3) Exposed secrets/keys, 4) Insecure dependencies. Focus: {{focus}}",
+        "output": "{{$security}}"
+      },
+      {
+        "name": "technical_debt",
+        "prompt": "Identify technical debt: 1) Code duplication, 2) Complex functions needing refactoring, 3) Missing tests, 4) Outdated patterns. Prioritize by impact.",
+        "output": "{{$debt}}"
+      },
+      {
+        "name": "generate_report",
+        "prompt": "Create comprehensive audit report with sections for overview, security findings, technical debt, flagged issues, and prioritized recommendations with effort estimates",
+        "output": "{{$report}}"
+      },
+      {
+        "name": "save_report",
+        "tool": "write_file",
+        "input": {
+          "filePath": "{{output}}",
+          "content": "{{$report}}"
+        }
+      }
+    ]
+  },
+  "permissions": [
+    "read_file",
+    "write_file"
+  ],
+  "requiresApproval": false
+}

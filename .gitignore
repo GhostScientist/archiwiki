@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Audit logs (may contain sensitive operation details)
+audit.log
+
+# Agent config directory (may contain cached API keys)
+.ted-mosby/
+
+# npm
+*.tgz
+.npmrc
+
+# Plans directory (contains local plan files)
+.plans/
+
+# Claude Code local settings
+.claude/

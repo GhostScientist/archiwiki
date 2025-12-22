@@ -1,0 +1,56 @@
+{
+  "name": "refactor-analysis",
+  "description": "Analyze code for refactoring opportunities and modernization paths",
+  "arguments": [
+    {
+      "name": "target",
+      "type": "path",
+      "required": true,
+      "description": "File or directory to analyze for refactoring"
+    },
+    {
+      "name": "goal",
+      "type": "string",
+      "required": false,
+      "description": "Refactoring goal: modernize, performance, readability, testability"
+    }
+  ],
+  "workflow": {
+    "steps": [
+      {
+        "name": "read_code",
+        "tool": "read_file",
+        "input": "{{target}}",
+        "output": "{{$code}}"
+      },
+      {
+        "name": "complexity_analysis",
+        "prompt": "Analyze code complexity. Identify: 1) Functions with high cyclomatic complexity, 2) Deep nesting, 3) Long parameter lists, 4) Code smells",
+        "output": "{{$complexity}}"
+      },
+      {
+        "name": "pattern_detection",
+        "prompt": "Detect outdated patterns and suggest modern alternatives based on goal: {{goal}}. Include: 1) Deprecated APIs, 2) Anti-patterns, 3) Missing design patterns, 4) Framework-specific improvements",
+        "output": "{{$patterns}}"
+      },
+      {
+        "name": "refactoring_plan",
+        "prompt": "Create detailed refactoring plan. For each suggestion provide: 1) Current code snippet, 2) Proposed refactoring, 3) Benefits, 4) Effort estimate (S/M/L), 5) Risk level",
+        "output": "{{$plan}}"
+      },
+      {
+        "name": "save_plan",
+        "tool": "write_file",
+        "input": {
+          "filePath": "./refactoring-plan-{{timestamp}}.md",
+          "content": "{{$plan}}"
+        }
+      }
+    ]
+  },
+  "permissions": [
+    "read_file",
+    "write_file"
+  ],
+  "requiresApproval": false
+}

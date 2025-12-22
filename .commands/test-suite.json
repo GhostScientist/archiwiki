@@ -1,0 +1,70 @@
+{
+  "name": "test-suite",
+  "description": "Generate comprehensive test suite for code file or module",
+  "arguments": [
+    {
+      "name": "target",
+      "type": "path",
+      "required": true,
+      "description": "Path to source file or directory to test"
+    },
+    {
+      "name": "framework",
+      "type": "string",
+      "default": "jest",
+      "description": "Test framework: jest, mocha, pytest, junit, etc."
+    },
+    {
+      "name": "output",
+      "type": "path",
+      "required": false,
+      "description": "Output path for test file (auto-generated if not specified)"
+    }
+  ],
+  "workflow": {
+    "steps": [
+      {
+        "name": "read_source",
+        "tool": "read_file",
+        "input": "{{target}}",
+        "output": "{{$source}}"
+      },
+      {
+        "name": "analyze_code",
+        "prompt": "Analyze this code and identify: 1) All exported functions/classes, 2) Dependencies and imports, 3) Edge cases to test, 4) Integration points",
+        "output": "{{$analysis}}"
+      },
+      {
+        "name": "generate_tests",
+        "prompt": "Generate comprehensive test suite using {{framework}}. Include: unit tests, edge cases, error handling, mocks for dependencies. Use best practices.",
+        "output": "{{$tests}}"
+      },
+      {
+        "name": "create_test_file",
+        "tool": "write_file",
+        "input": {
+          "filePath": "{{output}}",
+          "content": "{{$tests}}"
+        }
+      },
+      {
+        "name": "run_tests",
+        "tool": "run_command",
+        "input": "npm test {{output}}",
+        "output": "{{$results}}",
+        "onError": "continue"
+      },
+      {
+        "name": "report_coverage",
+        "prompt": "Summarize test results. Provide: 1) Pass/fail status, 2) Coverage estimation, 3) Suggestions for additional tests",
+        "output": "{{$summary}}"
+      }
+    ]
+  },
+  "permissions": [
+    "read_file",
+    "write_file",
+    "run_command"
+  ],
+  "requiresApproval": true
+}

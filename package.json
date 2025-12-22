@@ -1,0 +1,67 @@
+{
+  "name": "ted-mosby",
+  "version": "1.0.0",
+  "description": "Generate comprehensive architectural documentation wikis for code repositories with source traceability.",
+  "main": "dist/cli.js",
+  "bin": {
+    "ted-mosby": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js",
+    "test": "node dist/cli.js --help",
+    "clean": "rm -rf dist",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "keywords": [
+    "ai-agent",
+    "cli",
+    "claude",
+    "documentation",
+    "architecture",
+    "wiki",
+    "code-analysis",
+    "mcp"
+  ],
+  "author": "Dakota Kim",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.53",
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@lepion/mcp-server-mermaid": "^1.0.8",
+    "@modelcontextprotocol/server-filesystem": "^2025.12.18",
+    "axios": "^1.6.0",
+    "better-sqlite3": "^9.0.0",
+    "chalk": "^5.3.0",
+    "cheerio": "^1.0.0-rc.12",
+    "commander": "^12.0.0",
+    "dotenv": "^16.3.1",
+    "faiss-node": "^0.5.1",
+    "glob": "^10.3.10",
+    "gray-matter": "^4.0.3",
+    "inquirer": "^9.2.12",
+    "inquirer-autocomplete-prompt": "^3.0.1",
+    "ora": "^8.0.1",
+    "simple-git": "^3.30.0"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.10.0",
+    "@types/pdf-parse": "^1.1.4",
+    "typescript": "^5.3.0"
+  }
+}
