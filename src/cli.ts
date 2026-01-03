@@ -11,6 +11,7 @@ import inquirer from 'inquirer';
 import inquirerAutocomplete from 'inquirer-autocomplete-prompt';
 import { DevelopmentAgentAgent } from './agent.js';
 import { ArchitecturalWikiAgent, type ProgressEvent, type GenerationEstimate } from './wiki-agent.js';
+import { SiteGenerator } from './site-generator.js';
 import { ConfigManager } from './config.js';
 import { PermissionManager, type PermissionPolicy } from './permissions.js';
 import { PlanManager, formatAge, type Plan, type PlanStep } from './planner.js';
@@ -72,6 +73,10 @@ program
   .option('-f, --force', 'Force regeneration (ignore cache)')
   .option('-v, --verbose', 'Verbose output')
   .option('-e, --estimate', 'Estimate time and cost without running (dry run)')
+  .option('-s, --site', 'Generate interactive static site from wiki')
+  .option('--site-only', 'Only generate static site (skip wiki generation, use existing markdown)')
+  .option('--site-title <title>', 'Site title for static site')
+  .option('--theme <theme>', 'Site theme: light, dark, or auto', 'auto')
   .action(async (options) => {
     try {
       const configManager = new ConfigManager();
@@ -158,6 +163,12 @@ program
         return;
       }
 
+      // Handle --site-only mode (generate site from existing markdown)
+      if (options.siteOnly) {
+        await generateStaticSite(options);
+        return;
+      }
+
       const spinner = ora('Starting wiki generation...').start();
       let currentPhase = '';
 
@@ -228,7 +239,14 @@ program
 
         console.log();
         console.log(chalk.cyan('📁 Wiki generated at:'), chalk.white(path.resolve(options.output)));
-        console.log(chalk.gray('Open wiki/README.md to start exploring the documentation.'));
+
+        // Generate static site if requested
+        if (options.site || options.siteOnly) {
+          await generateStaticSite(options);
+        } else {
+          console.log(chalk.gray('Open wiki/README.md to start exploring the documentation.'));
+          console.log(chalk.gray('Tip: Add --site flag to generate an interactive website.'));
+        }
         console.log();
       } catch (error) {
         spinner.fail('Wiki generation failed');
@@ -242,6 +260,70 @@ program
       process.exit(1);
     }
   });
+
+// Static site generation helper
+async function generateStaticSite(options: {
+  output: string;
+  repo?: string;
+  siteTitle?: string;
+  theme?: 'light' | 'dark' | 'auto';
+  verbose?: boolean;
+}) {
+  console.log(chalk.cyan.bold('\n🌐 Generating Interactive Static Site\n'));
+
+  const wikiDir = path.resolve(options.output);
+  const siteDir = path.join(path.dirname(wikiDir), 'site');
+
+  // Check if wiki directory exists
+  if (!fs.existsSync(wikiDir)) {
+    console.log(chalk.red('❌ Wiki directory not found: ' + wikiDir));
+    console.log(chalk.gray('Run without --site-only to generate wiki first.'));
+    process.exit(1);
+  }
+
+  const spinner = ora('Building static site...').start();
+
+  try {
+    const siteGenerator = new SiteGenerator({
+      wikiDir,
+      outputDir: siteDir,
+      title: options.siteTitle || 'Architecture Wiki',
+      description: 'Interactive architectural documentation',
+      theme: (options.theme as 'light' | 'dark' | 'auto') || 'auto',
+      features: {
+        guidedTour: true,
+        codeExplorer: true,
+        search: true,
+        progressTracking: true,
+        keyboardNav: true
+      },
+      repoUrl: options.repo || ''
+    });
+
+    await siteGenerator.generate();
+
+    spinner.succeed(chalk.green('Static site generated!'));
+
+    console.log();
+    console.log(chalk.cyan('🌐 Site generated at:'), chalk.white(siteDir));
+    console.log();
+    console.log(chalk.white.bold('Features included:'));
+    console.log(chalk.gray('  ✓ Interactive search (press "/" to open)'));
+    console.log(chalk.gray('  ✓ Guided tours for onboarding'));
+    console.log(chalk.gray('  ✓ Code explorer with syntax highlighting'));
+    console.log(chalk.gray('  ✓ Live Mermaid diagrams (click to zoom)'));
+    console.log(chalk.gray('  ✓ Dark/light theme toggle'));
+    console.log(chalk.gray('  ✓ Keyboard navigation (press "?" for help)'));
+    console.log(chalk.gray('  ✓ Progress tracking'));
+    console.log();
+    console.log(chalk.white('To preview locally:'));
+    console.log(chalk.gray('  npx serve ' + siteDir));
+    console.log();
+  } catch (error) {
+    spinner.fail('Static site generation failed');
+    throw error;
+  }
+}
 
 program
   .argument('[query]', 'Direct query to the agent')
