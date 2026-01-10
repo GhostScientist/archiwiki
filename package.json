@@ -14,7 +14,8 @@
     "clean": "rm -rf dist",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build && npm test",
-    "release": "./scripts/release.sh"
+    "release": "./scripts/release.sh",
+    "publish-npm": "npm publish"
   },
   "keywords": [
     "ai-agent",
