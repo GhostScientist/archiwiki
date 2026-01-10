@@ -1,6 +1,6 @@
 {
   "name": "ted-mosby",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "description": "Generate comprehensive architectural documentation wikis for code repositories with source traceability.",
   "main": "dist/cli.js",
   "bin": {
@@ -13,7 +13,9 @@
     "test": "node dist/cli.js --help",
     "clean": "rm -rf dist",
     "prepare": "npm run build",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "release": "./scripts/release.sh",
+    "publish-npm": "npm publish"
   },
   "keywords": [
     "ai-agent",
@@ -42,6 +44,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.53",
     "@anthropic-ai/sdk": "^0.71.2",
+    "@huggingface/transformers": "^3.8.1",
     "@lepion/mcp-server-mermaid": "^1.0.8",
     "@modelcontextprotocol/server-filesystem": "^2025.12.18",
     "axios": "^1.6.0",
@@ -55,6 +58,7 @@
     "gray-matter": "^4.0.3",
     "inquirer": "^9.2.12",
     "inquirer-autocomplete-prompt": "^3.0.1",
+    "marked": "^12.0.0",
     "ora": "^8.0.1",
     "simple-git": "^3.30.0"
   },

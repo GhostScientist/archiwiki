@@ -43,40 +43,41 @@ npm install -g ted-mosby
 export ANTHROPIC_API_KEY=your-api-key-here
 ```
 
-Or create a `.env` file in your project:
-```bash
-echo "ANTHROPIC_API_KEY=your-api-key-here" > .env
-```
-
-### 2. Generate documentation
+### 2. Generate wiki + interactive site
 
 ```bash
-# For a local project
-ted-mosby generate -r ./my-project
+# Generate wiki with interactive site in one command
+ted-mosby generate -r ./my-project --site
 
-# For a GitHub repository
-ted-mosby generate -r https://github.com/user/repo
+# Or for a GitHub repository
+ted-mosby generate -r https://github.com/user/repo --site
 ```
 
 ### 3. View the results
 
-Open the generated `wiki/README.md` to explore your architectural documentation.
+- **Markdown wiki**: Open `wiki/README.md`
+- **Interactive site**: Open `wiki/site/index.html` in your browser
+
+The static site includes search, navigation, keyboard shortcuts, and works offline.
 
 ---
 
 ## Usage
 
-### Basic Commands
+### Generate Command
 
 ```bash
-# Generate wiki for current directory
+# Basic: Generate wiki for current directory
 ted-mosby generate -r .
 
-# Generate wiki for a specific directory
-ted-mosby generate -r /path/to/project
+# With interactive static site
+ted-mosby generate -r ./my-project --site
 
-# Generate wiki from a GitHub URL
-ted-mosby generate -r https://github.com/user/repo
+# Custom site title and theme
+ted-mosby generate -r ./my-project --site --site-title "My Project Docs" --theme dark
+
+# Generate site only (if wiki already exists)
+ted-mosby generate -r ./my-project --site-only
 
 # Specify output directory
 ted-mosby generate -r ./my-project -o ./docs/architecture
@@ -91,7 +92,63 @@ ted-mosby generate -r ./my-project -v
 ted-mosby generate -r ./my-project -e
 ```
 
-### All Options
+### Continue Command
+
+Resume generation to fix broken links or add missing pages:
+
+```bash
+# Check for and generate missing pages
+ted-mosby continue -r ./my-project -o ./wiki
+
+# Just verify (don't generate)
+ted-mosby continue -r ./my-project -o ./wiki --verify-only
+
+# Use cached index for faster iteration
+ted-mosby continue -r ./my-project -o ./wiki --skip-index
+```
+
+### Large Codebase Options
+
+For repositories with 10,000+ files:
+
+```bash
+# Limit indexed chunks (reduces memory usage)
+ted-mosby generate -r ./large-project --max-chunks 5000
+
+# Reduce search results per query
+ted-mosby generate -r ./large-project --max-results 5
+
+# Batched processing (for very large repos)
+ted-mosby generate -r ./large-project --batch-size 3000
+```
+
+### Direct API Mode
+
+Bypass Claude Code billing and use your API credits directly:
+
+```bash
+# Uses ANTHROPIC_API_KEY directly
+ted-mosby generate -r ./my-project --direct-api
+
+# Combine with skip-index for fast iteration
+ted-mosby generate -r ./my-project --direct-api --skip-index
+```
+
+### Debug & Development
+
+```bash
+# Skip re-indexing (use cached embeddings)
+ted-mosby generate -r ./my-project --skip-index
+
+# Limit agent turns (reduces cost)
+ted-mosby generate -r ./my-project --max-turns 50
+```
+
+---
+
+## Command Reference
+
+### `generate` - Create wiki documentation
 
 | Option | Description | Default |
 |--------|-------------|---------|
@@ -104,6 +161,43 @@ ted-mosby generate -r ./my-project -e
 | `-f, --force` | Force regeneration (ignore cache) | - |
 | `-v, --verbose` | Show detailed progress | - |
 | `-e, --estimate` | Estimate time/cost (dry run) | - |
+| `-s, --site` | Generate interactive static site | - |
+| `--site-only` | Generate site only (skip wiki) | - |
+| `--site-title <title>` | Custom site title | Project name |
+| `--theme <theme>` | Site theme: `light`, `dark`, `auto` | `auto` |
+| `--max-chunks <n>` | Limit indexed chunks | unlimited |
+| `--max-results <n>` | Max search results per query | `10` |
+| `--batch-size <n>` | Enable batched processing | - |
+| `--skip-index` | Use cached embeddings index | - |
+| `--max-turns <n>` | Limit agent iterations | `200` |
+| `--direct-api` | Use Anthropic API directly | - |
+
+### `continue` - Resume/fix wiki generation
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-r, --repo <path>` | Repository path (required) | - |
+| `-o, --output <dir>` | Wiki output directory | `./wiki` |
+| `-m, --model <model>` | Claude model to use | `claude-sonnet-4-20250514` |
+| `-v, --verbose` | Show detailed progress | - |
+| `--verify-only` | Only check, don't generate | - |
+| `--skip-index` | Use cached embeddings index | - |
+| `--direct-api` | Use Anthropic API directly | - |
+| `--max-turns <n>` | Limit agent iterations | `200` |
+
+---
+
+## Static Site Features
+
+When you use `--site`, Ted Mosby generates a fully interactive documentation site:
+
+- **Full-text search** - Instant search across all pages (Cmd/Ctrl+K)
+- **Keyboard navigation** - Arrow keys, vim-style (j/k/h/l)
+- **Dark/light mode** - Respects system preference or manual toggle
+- **Table of contents** - Auto-generated from headings
+- **Mobile responsive** - Works on all devices
+- **Offline capable** - No server required
+- **Mermaid diagrams** - Rendered automatically
 
 ---
 
@@ -115,7 +209,8 @@ When you run Ted Mosby:
 2. **Semantic Indexing** - Creates embeddings for intelligent code search
 3. **Architecture Discovery** - Identifies patterns, components, and relationships
 4. **Documentation Generation** - Writes markdown pages with diagrams
-5. **Source Linking** - Every concept links to specific file:line references
+5. **Verification Loop** - Checks all links and generates missing pages
+6. **Source Linking** - Every concept links to specific file:line references
 
 ### Typical Runtime
 
@@ -144,7 +239,11 @@ wiki/
 │       └── index.md             # Per-module documentation
 ├── guides/
 │   └── getting-started.md       # Quick start guide
-└── glossary.md                  # Concept index
+├── glossary.md                  # Concept index
+└── site/                        # (with --site flag)
+    ├── index.html               # Interactive site entry
+    ├── styles.css
+    └── scripts.js
 ```
 
 ### Source Traceability Example
@@ -192,6 +291,29 @@ Create a `wiki.json` file in your project root to customize generation:
 
 ---
 
+## Technical Details
+
+### RAG Chunking System
+
+Ted Mosby uses a sophisticated RAG (Retrieval Augmented Generation) system:
+
+- **Chunk size**: 1,500 characters with 200 character overlap
+- **Language-aware boundaries**: Chunks end at logical points (`}`, `};`, `end`)
+- **Embedding model**: `all-MiniLM-L6-v2` (384 dimensions, runs locally)
+- **Vector search**: FAISS with `IndexFlatIP` for cosine similarity
+- **Fallback**: Keyword search when FAISS unavailable
+
+### Chunk Prioritization
+
+For large codebases, chunks are prioritized by importance:
+- Core directories (`src/`, `lib/`, `app/`): +100 points
+- Entry points (`index.*`, `main.*`): +50 points
+- Config files: +30 points
+- Test files: -50 points
+- Vendor/generated code: -100 points
+
+---
+
 ## How It Works
 
 Ted Mosby is built with:
@@ -200,6 +322,39 @@ Ted Mosby is built with:
 - **RAG (Retrieval Augmented Generation)** - Semantic code search using embeddings
 - **[Model Context Protocol (MCP)](https://modelcontextprotocol.io)** - Tool integration for file operations
 - **Mermaid** - Architecture diagram generation
+- **FAISS** - High-performance vector similarity search
+
+---
+
+## Troubleshooting
+
+### "Credit balance is too low" error
+
+Use `--direct-api` to bypass Claude Code's billing check:
+```bash
+ted-mosby generate -r ./my-project --direct-api
+```
+
+### Out of memory on large repos
+
+Limit the indexed chunks:
+```bash
+ted-mosby generate -r ./large-project --max-chunks 5000 --batch-size 3000
+```
+
+### Slow re-runs during development
+
+Skip re-indexing with cached embeddings:
+```bash
+ted-mosby generate -r ./my-project --skip-index
+```
+
+### Missing pages / broken links
+
+Use the continue command to fix:
+```bash
+ted-mosby continue -r ./my-project -o ./wiki
+```
 
 ---
 
