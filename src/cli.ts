@@ -77,6 +77,12 @@ program
   .option('--site-only', 'Only generate static site (skip wiki generation, use existing markdown)')
   .option('--site-title <title>', 'Site title for static site')
   .option('--theme <theme>', 'Site theme: light, dark, or auto', 'auto')
+  .option('--max-chunks <number>', 'Maximum chunks to index (for large codebases, e.g., 5000)', parseInt)
+  .option('--max-results <number>', 'Maximum search results per query (default 10, reduce for large codebases)', parseInt)
+  .option('--batch-size <number>', 'Enable batched mode: process codebase in batches of N chunks (for very large repos)', parseInt)
+  .option('--skip-index', 'Skip indexing and use existing cached index (for debugging agent behavior)')
+  .option('--max-turns <number>', 'Maximum agent turns (default 200, lower to reduce cost estimate)', parseInt)
+  .option('--direct-api', 'Use Anthropic API directly (bypasses Claude Code billing, uses your API credits)')
   .action(async (options) => {
     try {
       const configManager = new ConfigManager();
@@ -172,21 +178,44 @@ program
       const spinner = ora('Starting wiki generation...').start();
       let currentPhase = '';
 
+      // Choose generation method based on options
+      const generationOptions = {
+        repoUrl: options.repo,
+        outputDir: options.output,
+        configPath: options.config,
+        accessToken: options.token || process.env.GITHUB_TOKEN,
+        model: options.model,
+        targetPath: options.path,
+        forceRegenerate: options.force,
+        verbose: options.verbose,
+        maxChunks: options.maxChunks,
+        maxSearchResults: options.maxResults,
+        batchSize: options.batchSize,
+        skipIndex: options.skipIndex,
+        maxTurns: options.maxTurns,
+        directApi: options.directApi
+      };
+
+      // Choose generator based on options
+      let generator;
+      if (options.directApi) {
+        console.log(chalk.yellow('\n⚡ Direct API mode: Using Anthropic API directly (bypasses Claude Code)\n'));
+        generator = agent.generateWikiDirectApi(generationOptions);
+      } else if (options.skipIndex) {
+        console.log(chalk.yellow('\n⚡ Skip-index mode: Using existing cached index (debug mode)\n'));
+        generator = agent.generateWikiAgentOnly(generationOptions);
+      } else if (options.batchSize) {
+        generator = agent.generateWikiBatched(generationOptions);
+      } else {
+        generator = agent.generateWiki(generationOptions);
+      }
+
       try {
-        for await (const event of agent.generateWiki({
-          repoUrl: options.repo,
-          outputDir: options.output,
-          configPath: options.config,
-          accessToken: options.token || process.env.GITHUB_TOKEN,
-          model: options.model,
-          targetPath: options.path,
-          forceRegenerate: options.force,
-          verbose: options.verbose
-        })) {
+        for await (const event of generator) {
           // Handle progress events
           if (event.type === 'phase') {
-            // Stop spinner during indexing phase so RAG output is visible
-            if (event.message.includes('Indexing')) {
+            // Stop spinner during indexing/batch phases so RAG output is visible
+            if (event.message.includes('Indexing') || event.message.includes('batch') || event.message.includes('Analyzing') || event.message.includes('Finalizing')) {
               spinner.stop();
               console.log(chalk.cyan(`\n📊 ${event.message}`));
             } else {
@@ -198,10 +227,13 @@ program
               spinner.start(event.message);
             }
           } else if (event.type === 'step') {
-            // Resume spinner after indexing completes
-            if (event.message.includes('Indexed')) {
+            // Show step messages for batch progress
+            if (event.message.includes('Indexed') || event.message.includes('Batch') || event.message.includes('Found') || event.message.includes('Final index') || event.message.includes('chunks loaded')) {
               console.log(chalk.green(`  ✓ ${event.message}`));
-              spinner.start('Generating architectural documentation');
+              // Resume spinner after last step before agent runs
+              if (event.message.includes('chunks loaded') || event.message.includes('Final index')) {
+                spinner.start('Generating architectural documentation...');
+              }
             } else if (options.verbose) {
               spinner.info(event.message);
               spinner.start(currentPhase);
@@ -261,6 +293,359 @@ program
     }
   });
 
+// Update-docs command - incremental documentation updates
+program
+  .command('update-docs')
+  .description('Update documentation based on changes since last index')
+  .requiredOption('-r, --repo <path>', 'Repository path (local)')
+  .option('-o, --output <dir>', 'Output directory for wiki', './wiki')
+  .option('-m, --model <model>', 'Claude model to use', 'claude-sonnet-4-20250514')
+  .option('-v, --verbose', 'Verbose output')
+  .action(async (options) => {
+    try {
+      const configManager = new ConfigManager();
+      const config = await configManager.load();
+
+      if (!configManager.hasApiKey()) {
+        console.log(chalk.red('❌ No API key found.'));
+        console.log(chalk.yellow('\nSet your Anthropic API key:'));
+        console.log(chalk.gray('  export ANTHROPIC_API_KEY=your-key-here'));
+        process.exit(1);
+      }
+
+      const wikiDir = path.resolve(options.output);
+      const cacheDir = path.join(wikiDir, '.ted-mosby-cache');
+      const indexStatePath = path.join(cacheDir, 'index-state.json');
+
+      // Check if we have an existing index
+      if (!fs.existsSync(indexStatePath)) {
+        console.log(chalk.yellow('⚠️  No existing index found.'));
+        console.log(chalk.gray('Run `ted-mosby generate` first to create the initial documentation.'));
+        process.exit(1);
+      }
+
+      const indexState = JSON.parse(fs.readFileSync(indexStatePath, 'utf-8'));
+      console.log(chalk.cyan.bold('\n📝 Documentation Update\n'));
+      console.log(chalk.white('Last indexed:'), chalk.green(indexState.commitHash.slice(0, 7)));
+      console.log(chalk.white('Indexed at:'), chalk.green(new Date(indexState.indexedAt).toLocaleString()));
+      console.log();
+
+      // Get changed files since last index
+      const git = (await import('simple-git')).simpleGit(options.repo);
+      const currentLog = await git.log({ maxCount: 1 });
+      const currentCommit = currentLog.latest?.hash || 'unknown';
+
+      if (currentCommit === indexState.commitHash) {
+        console.log(chalk.green('✓ Documentation is up to date. No changes since last index.'));
+        return;
+      }
+
+      const diffResult = await git.diff(['--name-only', indexState.commitHash, 'HEAD']);
+      const changedFiles = diffResult.split('\n').filter(f => f.trim().length > 0);
+
+      if (changedFiles.length === 0) {
+        console.log(chalk.green('✓ No relevant file changes detected.'));
+        return;
+      }
+
+      console.log(chalk.white('Current commit:'), chalk.green(currentCommit.slice(0, 7)));
+      console.log(chalk.white('Changed files:'), chalk.yellow(changedFiles.length.toString()));
+      console.log();
+
+      // Show changed files
+      console.log(chalk.white.bold('Files changed since last index:'));
+      const relevantExts = ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.java'];
+      const relevantFiles = changedFiles.filter(f => relevantExts.some(ext => f.endsWith(ext)));
+
+      for (const file of relevantFiles.slice(0, 15)) {
+        console.log(chalk.gray(`  • ${file}`));
+      }
+      if (relevantFiles.length > 15) {
+        console.log(chalk.gray(`  ... and ${relevantFiles.length - 15} more`));
+      }
+      console.log();
+
+      // Prompt for confirmation
+      const { confirm } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'confirm',
+        message: `Update documentation for ${relevantFiles.length} changed files?`,
+        default: true
+      }]);
+
+      if (!confirm) {
+        console.log(chalk.yellow('\nUpdate cancelled.'));
+        return;
+      }
+
+      // Run incremental update
+      const spinner = ora('Updating documentation...').start();
+
+      const permissionManager = new PermissionManager({ policy: 'permissive' });
+      const agent = new ArchitecturalWikiAgent({
+        verbose: options.verbose,
+        apiKey: config.apiKey,
+        permissionManager
+      });
+
+      // TODO: Implement incremental update mode in agent
+      // For now, re-run full generation but the RAG index is cached
+      // Future: Pass changedFiles to agent for targeted updates
+
+      try {
+        for await (const event of agent.generateWiki({
+          repoUrl: options.repo,
+          outputDir: options.output,
+          model: options.model,
+          verbose: options.verbose,
+          forceRegenerate: true  // Force re-index to update commit hash
+        })) {
+          if (event.type === 'phase') {
+            spinner.text = event.message;
+          } else if (event.type === 'complete') {
+            spinner.succeed(chalk.green('Documentation updated!'));
+          } else if (event.type === 'error') {
+            spinner.fail(chalk.red(event.message));
+          }
+        }
+
+        console.log();
+        console.log(chalk.cyan('📁 Wiki updated at:'), chalk.white(wikiDir));
+        console.log(chalk.gray('Tip: Run with --site flag to regenerate the static site.'));
+        console.log();
+      } catch (error) {
+        spinner.fail('Update failed');
+        throw error;
+      }
+    } catch (error) {
+      console.error(chalk.red('\nError:'), error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+// Continue-generation command - complete missing wiki pages
+program
+  .command('continue')
+  .description('Continue generating missing wiki pages (verifies completeness and creates missing pages)')
+  .requiredOption('-r, --repo <path>', 'Repository path (local)')
+  .option('-o, --output <dir>', 'Output directory for wiki', './wiki')
+  .option('-m, --model <model>', 'Claude model to use', 'claude-sonnet-4-20250514')
+  .option('-v, --verbose', 'Verbose output')
+  .option('--verify-only', 'Only verify completeness, do not generate missing pages')
+  .option('--skip-index', 'Skip indexing and use existing cached index')
+  .option('--direct-api', 'Use Anthropic API directly (bypasses Claude Code billing)')
+  .option('--max-turns <number>', 'Maximum agent turns (default 200)', parseInt)
+  .action(async (options) => {
+    try {
+      const configManager = new ConfigManager();
+      const config = await configManager.load();
+
+      if (!configManager.hasApiKey()) {
+        console.log(chalk.red('❌ No API key found.'));
+        console.log(chalk.yellow('\nSet your Anthropic API key:'));
+        console.log(chalk.gray('  export ANTHROPIC_API_KEY=your-key-here'));
+        process.exit(1);
+      }
+
+      const wikiDir = path.resolve(options.output);
+
+      // Check if wiki directory exists
+      if (!fs.existsSync(wikiDir)) {
+        console.log(chalk.red('❌ Wiki directory not found: ' + wikiDir));
+        console.log(chalk.gray('Run `ted-mosby generate` first to create the wiki.'));
+        process.exit(1);
+      }
+
+      console.log(chalk.cyan.bold('\n📋 Wiki Completeness Check\n'));
+
+      // Use the agent's verification method
+      const permissionManager = new PermissionManager({ policy: 'permissive' });
+      const agent = new ArchitecturalWikiAgent({
+        verbose: options.verbose,
+        apiKey: config.apiKey,
+        permissionManager
+      });
+
+      const verification = await agent.verifyWikiCompleteness(wikiDir);
+
+      console.log(chalk.white('Total pages:'), chalk.green(verification.totalPages.toString()));
+      console.log(chalk.white('Broken links:'), verification.brokenLinks.length > 0
+        ? chalk.red(verification.brokenLinks.length.toString())
+        : chalk.green('0'));
+      console.log(chalk.white('Missing pages:'), verification.missingPages.length > 0
+        ? chalk.red(verification.missingPages.length.toString())
+        : chalk.green('0'));
+      console.log();
+
+      if (verification.isComplete) {
+        console.log(chalk.green('✅ Wiki is complete! All internal links are valid.'));
+        return;
+      }
+
+      // Show missing pages
+      console.log(chalk.yellow.bold('Missing pages:'));
+      const uniqueMissing = [...new Set(verification.brokenLinks.map(l => l.target))];
+      for (const page of uniqueMissing.slice(0, 20)) {
+        console.log(chalk.gray(`  • ${page}`));
+      }
+      if (uniqueMissing.length > 20) {
+        console.log(chalk.gray(`  ... and ${uniqueMissing.length - 20} more`));
+      }
+      console.log();
+
+      if (options.verifyOnly) {
+        console.log(chalk.yellow('Verification complete. Run without --verify-only to generate missing pages.'));
+        process.exit(verification.isComplete ? 0 : 1);
+      }
+
+      // Prompt for confirmation
+      const { confirm } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'confirm',
+        message: `Generate ${uniqueMissing.length} missing pages?`,
+        default: true
+      }]);
+
+      if (!confirm) {
+        console.log(chalk.yellow('\nGeneration cancelled.'));
+        return;
+      }
+
+      // Run continuation
+      const spinner = ora('Generating missing pages...').start();
+
+      // Choose generator based on options
+      const generationOptions = {
+        repoUrl: options.repo,
+        outputDir: options.output,
+        model: options.model,
+        verbose: options.verbose,
+        missingPages: uniqueMissing,  // Pass missing pages to agent for targeted generation
+        skipIndex: options.skipIndex,
+        directApi: options.directApi,
+        maxTurns: options.maxTurns
+      };
+
+      let generator;
+      if (options.directApi) {
+        console.log(chalk.yellow('\n⚡ Direct API mode: Using Anthropic API directly\n'));
+        generator = agent.generateWikiDirectApi(generationOptions);
+      } else if (options.skipIndex) {
+        console.log(chalk.yellow('\n⚡ Skip-index mode: Using existing cached index\n'));
+        generator = agent.generateWikiAgentOnly(generationOptions);
+      } else {
+        generator = agent.generateWiki(generationOptions);
+      }
+
+      try {
+        for await (const event of generator) {
+          if ((event as ProgressEvent).type === 'phase') {
+            spinner.text = (event as ProgressEvent).message;
+          } else if ((event as ProgressEvent).type === 'complete') {
+            spinner.succeed(chalk.green('Missing pages generated!'));
+          } else if ((event as ProgressEvent).type === 'error') {
+            spinner.fail(chalk.red((event as ProgressEvent).message));
+          }
+        }
+
+        // Verify again
+        console.log();
+        console.log(chalk.cyan('Verifying completeness...'));
+        const postVerification = await agent.verifyWikiCompleteness(wikiDir);
+
+        if (postVerification.isComplete) {
+          console.log(chalk.green('✅ Wiki is now complete! All internal links are valid.'));
+        } else {
+          console.log(chalk.yellow(`⚠️  ${postVerification.brokenLinks.length} broken links remain.`));
+          console.log(chalk.gray('Run `ted-mosby continue` again to generate remaining pages.'));
+        }
+
+        console.log();
+        console.log(chalk.cyan('📁 Wiki at:'), chalk.white(wikiDir));
+        console.log();
+      } catch (error) {
+        spinner.fail('Generation failed');
+        throw error;
+      }
+    } catch (error) {
+      console.error(chalk.red('\nError:'), error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+// Verify command - check wiki completeness without generating
+program
+  .command('verify')
+  .description('Verify wiki completeness and report broken links')
+  .option('-o, --output <dir>', 'Wiki directory to verify', './wiki')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    try {
+      const wikiDir = path.resolve(options.output);
+
+      if (!fs.existsSync(wikiDir)) {
+        console.log(chalk.red('❌ Wiki directory not found: ' + wikiDir));
+        process.exit(1);
+      }
+
+      const configManager = new ConfigManager();
+      const config = await configManager.load();
+      const permissionManager = new PermissionManager({ policy: 'permissive' });
+      const agent = new ArchitecturalWikiAgent({
+        apiKey: config.apiKey,
+        permissionManager
+      });
+
+      const verification = await agent.verifyWikiCompleteness(wikiDir);
+
+      if (options.json) {
+        console.log(JSON.stringify(verification, null, 2));
+        process.exit(verification.isComplete ? 0 : 1);
+      }
+
+      console.log(chalk.cyan.bold('\n📋 Wiki Completeness Report\n'));
+      console.log(chalk.white('Total pages:'), chalk.green(verification.totalPages.toString()));
+      console.log(chalk.white('Broken links:'), verification.brokenLinks.length > 0
+        ? chalk.red(verification.brokenLinks.length.toString())
+        : chalk.green('0'));
+      console.log();
+
+      if (verification.isComplete) {
+        console.log(chalk.green('✅ Wiki is complete! All internal links are valid.'));
+      } else {
+        console.log(chalk.yellow.bold('Broken links found:'));
+
+        // Group by target
+        const byTarget = new Map<string, string[]>();
+        for (const link of verification.brokenLinks) {
+          if (!byTarget.has(link.target)) {
+            byTarget.set(link.target, []);
+          }
+          byTarget.get(link.target)!.push(link.source);
+        }
+
+        for (const [target, sources] of byTarget) {
+          console.log(chalk.red(`\n  Missing: ${target}`));
+          console.log(chalk.gray(`  Referenced by:`));
+          for (const source of sources.slice(0, 3)) {
+            console.log(chalk.gray(`    - ${source}`));
+          }
+          if (sources.length > 3) {
+            console.log(chalk.gray(`    ... and ${sources.length - 3} more`));
+          }
+        }
+
+        console.log();
+        console.log(chalk.yellow('Run `ted-mosby continue` to generate missing pages.'));
+      }
+
+      process.exit(verification.isComplete ? 0 : 1);
+    } catch (error) {
+      console.error(chalk.red('\nError:'), error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
 // Static site generation helper
 async function generateStaticSite(options: {
   output: string;
@@ -291,7 +676,7 @@ async function generateStaticSite(options: {
       description: 'Interactive architectural documentation',
       theme: (options.theme as 'light' | 'dark' | 'auto') || 'auto',
       features: {
-        guidedTour: true,
+        guidedTour: false,  // Disabled by default - can be enabled via flag
         codeExplorer: true,
         search: true,
         progressTracking: true,

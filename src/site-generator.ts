@@ -97,6 +97,7 @@ export class SiteGenerator {
   private pages: WikiPage[] = [];
   private navigation: SiteNavigation = { sections: [] };
   private tours: GuidedTour[] = [];
+  private mermaidPlaceholders: Map<string, string> = new Map();
 
   constructor(options: SiteGenerationOptions) {
     this.options = {
@@ -127,19 +128,19 @@ export class SiteGenerator {
     const renderer = new marked.Renderer();
 
     // Enhanced code block rendering with copy button and source links
-    renderer.code = ({ text, lang }: { text: string; lang?: string }) => {
-      const language = lang || 'text';
-      const escapedCode = this.escapeHtml(text);
+    renderer.code = (code: string, language?: string) => {
+      const lang = language || 'text';
+      const escapedCode = this.escapeHtml(code);
 
       // Check for source reference in the code block
-      const sourceMatch = text.match(/^\/\/\s*Source:\s*(.+)$/m) ||
-                          text.match(/^#\s*Source:\s*(.+)$/m);
+      const sourceMatch = code.match(/^\/\/\s*Source:\s*(.+)$/m) ||
+                          code.match(/^#\s*Source:\s*(.+)$/m);
       const sourceRef = sourceMatch ? sourceMatch[1].trim() : '';
 
       return `
-        <div class="code-block" data-language="${language}">
+        <div class="code-block" data-language="${lang}">
           <div class="code-header">
-            <span class="code-language">${language}</span>
+            <span class="code-language">${lang}</span>
             ${sourceRef ? `<a href="#" class="code-source" data-source="${sourceRef}">${sourceRef}</a>` : ''}
             <button class="code-copy" title="Copy code">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -148,24 +149,24 @@ export class SiteGenerator {
               </svg>
             </button>
           </div>
-          <pre><code class="language-${language}">${escapedCode}</code></pre>
+          <pre><code class="language-${lang}">${escapedCode}</code></pre>
         </div>
       `;
     };
 
     // Enhanced heading rendering with anchor links
-    renderer.heading = ({ text, depth }: { text: string; depth: number }) => {
+    renderer.heading = (text: string, level: number) => {
       const id = this.slugify(text);
       return `
-        <h${depth} id="${id}" class="heading-anchor">
+        <h${level} id="${id}" class="heading-anchor">
           <a href="#${id}" class="anchor-link" aria-hidden="true">#</a>
           ${text}
-        </h${depth}>
+        </h${level}>
       `;
     };
 
     // Enhanced link rendering
-    renderer.link = ({ href, title, text }: { href: string; title?: string | null; text: string }) => {
+    renderer.link = (href: string, title: string | null | undefined, text: string) => {
       const isExternal = href.startsWith('http://') || href.startsWith('https://');
       const isSourceLink = href.includes(':') && !isExternal && href.match(/\.(ts|js|py|go|rs|java|rb|php|c|cpp|swift):/);
 
@@ -183,7 +184,7 @@ export class SiteGenerator {
     };
 
     // Enhanced image rendering
-    renderer.image = ({ href, title, text }: { href: string; title?: string | null; text: string }) => {
+    renderer.image = (href: string, title: string | null, text: string) => {
       return `
         <figure class="image-figure">
           <img src="${href}" alt="${text}" title="${title || ''}" loading="lazy" />
@@ -193,15 +194,15 @@ export class SiteGenerator {
     };
 
     // Enhanced blockquote rendering (for callouts)
-    renderer.blockquote = ({ text }: { text: string }) => {
+    renderer.blockquote = (quote: string) => {
       // Check for callout type markers
-      const calloutMatch = text.match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i);
+      const calloutMatch = quote.match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i);
       if (calloutMatch) {
         const type = calloutMatch[1].toLowerCase();
-        const content = text.replace(calloutMatch[0], '').trim();
+        const content = quote.replace(calloutMatch[0], '').trim();
         return `<div class="callout callout-${type}"><div class="callout-title">${calloutMatch[1]}</div><div class="callout-content">${content}</div></div>`;
       }
-      return `<blockquote>${text}</blockquote>`;
+      return `<blockquote>${quote}</blockquote>`;
     };
 
     marked.use({ renderer });
@@ -306,11 +307,14 @@ export class SiteGenerator {
       // Extract mermaid diagrams
       const mermaidDiagrams = this.extractMermaidDiagrams(markdownContent);
 
-      // Process mermaid blocks before markdown conversion
+      // Process mermaid blocks before markdown conversion (replaces with placeholders)
       const processedMarkdown = this.processMermaidBlocks(markdownContent);
 
       // Convert markdown to HTML
-      const htmlContent = await marked.parse(processedMarkdown);
+      const parsedHtml = await marked.parse(processedMarkdown);
+
+      // Restore mermaid diagrams after markdown processing to preserve their syntax
+      const htmlContent = this.restoreMermaidBlocks(parsedHtml);
 
       return {
         path: filePath,
@@ -397,21 +401,42 @@ export class SiteGenerator {
   }
 
   /**
-   * Process mermaid blocks for client-side rendering
+   * Process mermaid blocks by replacing them with placeholders before markdown processing.
+   * This prevents marked from corrupting the mermaid diagram syntax.
    */
   private processMermaidBlocks(content: string): string {
+    this.mermaidPlaceholders.clear();
     let diagramIndex = 0;
+
     return content.replace(/```mermaid\n([\s\S]*?)```/g, (_, diagram) => {
       const id = `mermaid-${diagramIndex++}`;
-      return `<div class="mermaid-container" id="${id}">
+      const placeholder = `MERMAID_PLACEHOLDER_${id}_END`;
+
+      // Store the original diagram content with its HTML wrapper
+      this.mermaidPlaceholders.set(placeholder, `<div class="mermaid-container" id="${id}">
         <div class="mermaid">${diagram.trim()}</div>
         <button class="mermaid-fullscreen" title="Fullscreen" data-diagram="${id}">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
           </svg>
         </button>
-      </div>`;
+      </div>`);
+
+      return placeholder;
     });
+  }
+
+  /**
+   * Restore mermaid diagrams after markdown processing
+   */
+  private restoreMermaidBlocks(html: string): string {
+    let result = html;
+    for (const [placeholder, diagram] of this.mermaidPlaceholders) {
+      // The placeholder might be wrapped in <p> tags by marked, so handle both cases
+      result = result.replace(new RegExp(`<p>${placeholder}</p>`, 'g'), diagram);
+      result = result.replace(new RegExp(placeholder, 'g'), diagram);
+    }
+    return result;
   }
 
   /**

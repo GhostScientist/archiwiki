@@ -379,13 +379,17 @@ body {
 .main-content {
   flex: 1;
   margin-left: var(--sidebar-width);
+  margin-right: var(--toc-width);
   padding: var(--spacing-2xl);
-  max-width: calc(100% - var(--sidebar-width));
+  max-width: calc(100% - var(--sidebar-width) - var(--toc-width));
+  min-width: 0; /* Prevent content from overflowing */
 }
 
 .page-content {
   max-width: var(--content-max-width);
   margin: 0 auto;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
 }
 
 /* TOC Sidebar */
@@ -1512,6 +1516,7 @@ tr:hover {
   }
 
   .main-content {
+    margin-right: 0;
     max-width: calc(100% - var(--sidebar-width));
   }
 }
