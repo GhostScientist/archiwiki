@@ -366,21 +366,37 @@ export function getTemplates() {
         <div class="chat-loading-spinner"></div>
         <span class="chat-loading-text">Loading AI model...</span>
       </div>
+      <div class="chat-progress-container">
+        <div class="chat-progress-bar"></div>
+      </div>
     </div>
     <div class="chat-messages">
       <div class="chat-welcome">
         <div class="chat-welcome-icon">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z"></path>
-            <path d="M12 6v6l4 2"></path>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"></path>
           </svg>
         </div>
         <h4>Ask about this documentation</h4>
-        <p>I can help you find information and answer questions about the architecture and code in this wiki.</p>
+        <p>I'll search through the wiki and provide answers with links to relevant pages. Powered by SmolLM2 running locally in your browser.</p>
+        <div class="chat-capabilities">
+          <span class="capability"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> Answer architecture questions</span>
+          <span class="capability"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> Find relevant documentation</span>
+          <span class="capability"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> Link to source pages</span>
+        </div>
         <div class="chat-suggestions">
-          <button class="chat-suggestion" data-question="What is the overall architecture?">What is the overall architecture?</button>
-          <button class="chat-suggestion" data-question="How do the main components work together?">How do components work together?</button>
-          <button class="chat-suggestion" data-question="What are the key concepts I should understand?">What are the key concepts?</button>
+          <button class="chat-suggestion" data-question="What is the overall architecture?">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            What is the overall architecture?
+          </button>
+          <button class="chat-suggestion" data-question="How do the main components work together?">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            How do components work together?
+          </button>
+          <button class="chat-suggestion" data-question="What are the key concepts I should understand?">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            What are the key concepts?
+          </button>
         </div>
       </div>
     </div>

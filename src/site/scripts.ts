@@ -834,7 +834,42 @@ export function getClientScripts(features: Features): string {
     embedder: null,
     embeddingsIndex: null,
     messages: [],
-    abortController: null
+    abortController: null,
+    runtime: null, // 'webgpu', 'wasm', or 'fallback'
+    modelSize: null
+  };
+
+  // Browser capability detection
+  const browserCapabilities = {
+    hasWebGPU: false,
+    hasWasm: typeof WebAssembly !== 'undefined',
+    isMobile: /iPhone|iPad|iPod|Android/i.test(navigator.userAgent),
+    memoryGB: navigator.deviceMemory || 4,
+
+    async detect() {
+      // Check WebGPU support
+      if (navigator.gpu) {
+        try {
+          const adapter = await navigator.gpu.requestAdapter();
+          this.hasWebGPU = !!adapter;
+        } catch (e) {
+          this.hasWebGPU = false;
+        }
+      }
+      return this;
+    },
+
+    getRecommendedConfig() {
+      // Choose optimal configuration based on device capabilities
+      if (this.hasWebGPU && !this.isMobile && this.memoryGB >= 4) {
+        return { device: 'webgpu', dtype: 'q4', model: 'HuggingFaceTB/SmolLM2-360M-Instruct', label: 'WebGPU' };
+      } else if (this.hasWebGPU && this.memoryGB >= 2) {
+        return { device: 'webgpu', dtype: 'q4', model: 'HuggingFaceTB/SmolLM2-135M-Instruct', label: 'WebGPU' };
+      } else if (this.hasWasm) {
+        return { device: 'wasm', dtype: 'q8', model: 'HuggingFaceTB/SmolLM2-135M-Instruct', label: 'WASM' };
+      }
+      return { device: null, dtype: null, model: null, label: 'Search Only' };
+    }
   };
 
   function initAIChat() {
@@ -847,6 +882,11 @@ export function getClientScripts(features: Features): string {
 
     if (!panel || !trigger) return;
 
+    // Detect browser capabilities on init
+    browserCapabilities.detect().then(() => {
+      updateRuntimeBadge();
+    });
+
     // Open/close chat panel
     trigger.addEventListener('click', () => {
       panel.classList.toggle('open');
@@ -858,6 +898,22 @@ export function getClientScripts(features: Features): string {
 
     closeBtn?.addEventListener('click', () => {
       panel.classList.remove('open');
+    });
+
+    // Close on escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && panel.classList.contains('open')) {
+        panel.classList.remove('open');
+      }
+    });
+
+    // Close on click outside (optional, for better UX)
+    document.addEventListener('click', (e) => {
+      if (panel.classList.contains('open') &&
+          !panel.contains(e.target) &&
+          !trigger.contains(e.target)) {
+        panel.classList.remove('open');
+      }
     });
 
     // Handle input
@@ -894,6 +950,20 @@ export function getClientScripts(features: Features): string {
     loadEmbeddingsIndex();
   }
 
+  function updateRuntimeBadge() {
+    const badge = document.querySelector('.chat-model-badge');
+    if (!badge) return;
+
+    const config = browserCapabilities.getRecommendedConfig();
+    if (chatState.runtime) {
+      badge.textContent = chatState.runtime === 'webgpu' ? 'SmolLM2 (WebGPU)' :
+                          chatState.runtime === 'wasm' ? 'SmolLM2 (WASM)' : 'Search Mode';
+      badge.className = 'chat-model-badge runtime-' + chatState.runtime;
+    } else {
+      badge.textContent = 'Detecting...';
+    }
+  }
+
   async function loadEmbeddingsIndex() {
     try {
       const response = await fetch(config.rootPath + 'embeddings-index.json');
@@ -913,8 +983,18 @@ export function getClientScripts(features: Features): string {
     const statusEl = document.querySelector('.chat-panel-status');
     const loadingText = statusEl?.querySelector('.chat-loading-text');
     const sendBtn = document.querySelector('.chat-send');
+    const progressBar = statusEl?.querySelector('.chat-progress-bar');
 
     statusEl?.classList.add('visible');
+
+    // Get recommended configuration for this browser
+    await browserCapabilities.detect();
+    const runtimeConfig = browserCapabilities.getRecommendedConfig();
+
+    if (loadingText) {
+      loadingText.innerHTML = 'Detecting capabilities... <span class="runtime-info">' +
+        (browserCapabilities.hasWebGPU ? 'WebGPU available' : 'Using WASM') + '</span>';
+    }
 
     try {
       // Dynamically import transformers.js from CDN
@@ -927,36 +1007,48 @@ export function getClientScripts(features: Features): string {
       env.allowLocalModels = false;
       env.useBrowserCache = true;
 
-      if (loadingText) loadingText.textContent = 'Loading SmolLM2 model (this may take a moment)...';
+      // Only load LLM if we have a suitable runtime
+      if (runtimeConfig.device) {
+        if (loadingText) {
+          loadingText.innerHTML = 'Loading ' + runtimeConfig.model.split('/')[1] +
+            ' <span class="runtime-info">(' + runtimeConfig.label + ')</span>';
+        }
 
-      // Load text generation pipeline with SmolLM2
-      // Using the smaller 135M version for faster loading
-      chatState.generator = await pipeline(
-        'text-generation',
-        'HuggingFaceTB/SmolLM2-135M-Instruct',
-        {
-          dtype: 'q4',
-          device: 'webgpu',
-          progress_callback: (progress) => {
-            if (progress.status === 'progress' && loadingText) {
-              const pct = Math.round((progress.loaded / progress.total) * 100);
-              loadingText.textContent = 'Downloading model: ' + pct + '%';
+        chatState.generator = await pipeline(
+          'text-generation',
+          runtimeConfig.model,
+          {
+            dtype: runtimeConfig.dtype,
+            device: runtimeConfig.device,
+            progress_callback: (progress) => {
+              if (progress.status === 'progress') {
+                const pct = Math.round((progress.loaded / progress.total) * 100);
+                if (loadingText) loadingText.textContent = 'Downloading model: ' + pct + '%';
+                if (progressBar) progressBar.style.width = pct + '%';
+              }
             }
           }
-        }
-      );
+        );
+        chatState.runtime = runtimeConfig.device;
+        chatState.modelSize = runtimeConfig.model.includes('360M') ? '360M' : '135M';
+      } else {
+        chatState.runtime = 'fallback';
+      }
 
-      // Also load embedding model for semantic search
+      // Also load embedding model for semantic search (works on all runtimes)
       if (loadingText) loadingText.textContent = 'Loading embedding model...';
+      if (progressBar) progressBar.style.width = '0%';
+
       chatState.embedder = await pipeline(
         'feature-extraction',
         'Xenova/all-MiniLM-L6-v2',
         {
           dtype: 'q8',
           progress_callback: (progress) => {
-            if (progress.status === 'progress' && loadingText) {
+            if (progress.status === 'progress') {
               const pct = Math.round((progress.loaded / progress.total) * 100);
-              loadingText.textContent = 'Loading embeddings: ' + pct + '%';
+              if (loadingText) loadingText.textContent = 'Loading embeddings: ' + pct + '%';
+              if (progressBar) progressBar.style.width = pct + '%';
             }
           }
         }
@@ -966,21 +1058,27 @@ export function getClientScripts(features: Features): string {
       chatState.isLoading = false;
 
       statusEl?.classList.remove('visible');
+      updateRuntimeBadge();
       if (sendBtn) sendBtn.disabled = !document.querySelector('.chat-input')?.value?.trim();
 
-      showToast('AI assistant ready!', 'success');
+      const runtimeMsg = chatState.runtime === 'webgpu' ? ' (WebGPU accelerated)' :
+                         chatState.runtime === 'wasm' ? ' (WASM runtime)' : '';
+      showToast('AI assistant ready!' + runtimeMsg, 'success');
     } catch (error) {
       console.error('Failed to load AI model:', error);
       chatState.isLoading = false;
+      chatState.runtime = 'fallback';
 
-      if (loadingText) loadingText.textContent = 'Failed to load model. Using fallback search.';
+      if (loadingText) loadingText.textContent = 'Using smart search mode (AI model unavailable)';
 
       // Use fallback mode (keyword search only)
       setTimeout(() => {
         statusEl?.classList.remove('visible');
         chatState.isModelLoaded = true; // Enable chat with fallback
+        updateRuntimeBadge();
         if (sendBtn) sendBtn.disabled = false;
-      }, 2000);
+        showToast('Chat ready in search mode', 'info');
+      }, 1500);
     }
   }
 
@@ -1046,35 +1144,103 @@ export function getClientScripts(features: Features): string {
 
     const messageEl = document.createElement('div');
     messageEl.className = 'chat-message ' + role;
+    messageEl.setAttribute('data-role', role);
 
-    const avatar = role === 'user' ? 'U' : 'AI';
+    const avatarIcon = role === 'user'
+      ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>';
 
     let sourcesHtml = '';
     if (sources && sources.length > 0) {
-      sourcesHtml = '<div class="chat-message-sources">Sources: ' +
-        sources.map(s => '<a href="' + config.rootPath + s.path + '">' + escapeHtml(s.title) + '</a>').join(', ') +
-        '</div>';
+      sourcesHtml = '<div class="chat-message-sources"><span class="sources-label">📚 Related docs:</span><div class="sources-list">' +
+        sources.map(s =>
+          '<a href="' + config.rootPath + s.path + '" class="source-link" title="' + escapeHtml(s.title) + '">' +
+          '<span class="source-icon">📄</span>' +
+          '<span class="source-title">' + escapeHtml(s.title) + '</span>' +
+          '</a>'
+        ).join('') +
+        '</div></div>';
     }
 
+    // Format content with inline doc links
+    const formattedContent = formatChatContent(content, sources);
+
     messageEl.innerHTML = \`
-      <div class="chat-message-avatar">\${avatar}</div>
+      <div class="chat-message-avatar">\${avatarIcon}</div>
       <div class="chat-message-content">
-        \${formatChatContent(content)}
+        \${formattedContent}
         \${sourcesHtml}
       </div>
     \`;
 
+    // Add click handlers for inline doc links
+    messageEl.querySelectorAll('.inline-doc-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        // Add a visual feedback before navigation
+        link.classList.add('clicked');
+      });
+    });
+
     messagesContainer.appendChild(messageEl);
-    messagesContainer.scrollTo(0, messagesContainer.scrollHeight);
+
+    // Smooth scroll to new message
+    requestAnimationFrame(() => {
+      messagesContainer.scrollTo({
+        top: messagesContainer.scrollHeight,
+        behavior: 'smooth'
+      });
+    });
   }
 
-  function formatChatContent(content) {
-    // Simple markdown-like formatting
-    return content
-      .split('\\n\\n').map(p => '<p>' + p + '</p>').join('')
-      .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
+  function formatChatContent(content, sources) {
+    // First, handle paragraphs
+    let formatted = content
+      .split('\\n\\n')
+      .filter(p => p.trim())
+      .map(p => '<p>' + p.replace(/\\n/g, '<br>') + '</p>')
+      .join('');
+
+    // Code formatting
+    formatted = formatted
+      .replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g, '<pre><code class="language-$1">$2</code></pre>')
+      .replace(/\`([^\`]+)\`/g, '<code>$1</code>');
+
+    // Bold and italic
+    formatted = formatted
       .replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')
       .replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+
+    // Lists
+    formatted = formatted.replace(/<p>\\s*[-•]\\s+(.+?)(<\\/p>|<br>)/g, '<li>$1</li>');
+    formatted = formatted.replace(/(<li>.*<\\/li>)+/g, '<ul>$&</ul>');
+
+    // Convert wiki page references to clickable links
+    if (sources && sources.length > 0 && state.searchIndex) {
+      // Create a map of page titles to paths for linking
+      const pageLookup = {};
+      state.searchIndex.forEach(page => {
+        pageLookup[page.title.toLowerCase()] = { path: page.path, title: page.title };
+        // Also add without common prefixes
+        const shortTitle = page.title.replace(/^(The |A |An )/i, '');
+        pageLookup[shortTitle.toLowerCase()] = { path: page.path, title: page.title };
+      });
+
+      // Look for potential page references in the content
+      Object.keys(pageLookup).forEach(key => {
+        if (key.length > 3) { // Only match titles longer than 3 chars
+          const page = pageLookup[key];
+          const regex = new RegExp('\\\\b(' + escapeRegex(key) + ')\\\\b', 'gi');
+          formatted = formatted.replace(regex, (match, p1, offset, string) => {
+            // Don't replace if already inside a link or code
+            const before = string.substring(Math.max(0, offset - 50), offset);
+            if (before.includes('<a ') || before.includes('<code')) return match;
+            return '<a href="' + config.rootPath + page.path + '" class="inline-doc-link" title="View: ' + page.title + '">' + p1 + '</a>';
+          });
+        }
+      });
+    }
+
+    return formatted;
   }
 
   async function findRelevantContext(question) {

@@ -152,8 +152,9 @@ describe('Chat UI Templates', () => {
         features: { aiChat: true }
       });
 
-      expect(html).toContain('help you find information');
-      expect(html).toContain('answer questions');
+      expect(html).toContain('search through the wiki');
+      expect(html).toContain('provide answers');
+      expect(html).toContain('SmolLM2');
     });
   });
 

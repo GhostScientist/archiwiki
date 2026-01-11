@@ -270,7 +270,8 @@ describe('Chat Client Scripts', () => {
     const scripts = getClientScripts({ aiChat: true });
 
     it('should format paragraphs', () => {
-      expect(scripts).toContain("<p>' + p + '</p>'");
+      expect(scripts).toContain("'<p>'");
+      expect(scripts).toContain("'</p>'");
     });
 
     it('should format inline code', () => {
