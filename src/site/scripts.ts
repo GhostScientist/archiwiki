@@ -1236,25 +1236,77 @@ export function getClientScripts(features: Features): string {
     autoResizeTextarea(input);
     sendBtn.disabled = true;
 
-    // Show typing indicator
-    const typingEl = document.createElement('div');
-    typingEl.className = 'chat-typing';
-    typingEl.innerHTML = '<div class="chat-typing-dot"></div><div class="chat-typing-dot"></div><div class="chat-typing-dot"></div>';
-    messagesContainer?.appendChild(typingEl);
-    messagesContainer?.scrollTo(0, messagesContainer.scrollHeight);
+    // Create placeholder for streaming response
+    const responseEl = document.createElement('div');
+    responseEl.className = 'chat-message assistant streaming';
+    responseEl.setAttribute('data-role', 'assistant');
+    responseEl.innerHTML = \`
+      <div class="chat-message-avatar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+      </div>
+      <div class="chat-message-content">
+        <div class="streaming-indicator">
+          <span class="streaming-dot"></span>
+          <span class="streaming-text">Thinking...</span>
+        </div>
+      </div>
+    \`;
+    messagesContainer?.appendChild(responseEl);
+    messagesContainer?.scrollTo({ top: messagesContainer.scrollHeight, behavior: 'smooth' });
 
     try {
       // Find relevant context
       const context = await findRelevantContext(question);
 
+      // Update streaming indicator
+      const streamingText = responseEl.querySelector('.streaming-text');
+      if (streamingText) {
+        streamingText.textContent = chatState.generator ? 'Generating response...' : 'Searching documentation...';
+      }
+
       // Generate response
       const response = await generateResponse(question, context);
 
-      // Remove typing indicator
-      typingEl.remove();
+      // Remove streaming class and indicator
+      responseEl.classList.remove('streaming');
 
-      // Add assistant response
-      addChatMessage('assistant', response.answer, response.sources);
+      // Stream the response word by word
+      const contentEl = responseEl.querySelector('.chat-message-content');
+      const fullResponse = response.diagram
+        ? response.answer + '\\n\\n**Visual Flow:**\\n\\n\`\`\`mermaid\\n' + response.diagram.diagram + '\`\`\`\\n\\n*Click on any box to navigate to that documentation page.*'
+        : response.answer;
+
+      // Build sources HTML
+      let sourcesHtml = '';
+      if (response.sources && response.sources.length > 0) {
+        sourcesHtml = '<div class="chat-message-sources"><span class="sources-label">📚 Related docs:</span><div class="sources-list">' +
+          response.sources.map(s =>
+            '<a href="' + config.rootPath + s.path + '" class="source-link" title="' + escapeHtml(s.title) + '">' +
+            '<span class="source-icon">📄</span>' +
+            '<span class="source-title">' + escapeHtml(s.title) + '</span>' +
+            '</a>'
+          ).join('') +
+          '</div></div>';
+      }
+
+      // Simulate streaming effect
+      const words = fullResponse.split(' ');
+      let displayed = '';
+
+      for (let i = 0; i < words.length; i++) {
+        displayed += (i > 0 ? ' ' : '') + words[i];
+        const formattedContent = formatChatContent(displayed, response.sources);
+        contentEl.innerHTML = formattedContent + (i === words.length - 1 ? sourcesHtml : '');
+
+        // Scroll to keep new content visible
+        messagesContainer?.scrollTo({ top: messagesContainer.scrollHeight, behavior: 'smooth' });
+
+        // Delay between words (faster for longer responses)
+        const delay = words.length > 50 ? 8 : 20;
+        if (i < words.length - 1) {
+          await new Promise(r => setTimeout(r, delay));
+        }
+      }
 
       // Save to message history
       chatState.messages.push({ role: 'user', content: question });
@@ -1262,8 +1314,11 @@ export function getClientScripts(features: Features): string {
 
     } catch (error) {
       console.error('Chat error:', error);
-      typingEl.remove();
-      addChatMessage('assistant', 'Sorry, I encountered an error. Please try again.');
+      responseEl.classList.remove('streaming');
+      const contentEl = responseEl.querySelector('.chat-message-content');
+      if (contentEl) {
+        contentEl.innerHTML = '<p>Sorry, I encountered an error. Please try again.</p>';
+      }
     }
 
     sendBtn.disabled = !chatState.isModelLoaded;
@@ -1703,6 +1758,74 @@ export function getClientScripts(features: Features): string {
     return { diagram, nodes, type: diagramType };
   }
 
+  // Format prompt for SmolLM2-Instruct chat template
+  function formatChatPrompt(systemPrompt, userQuestion, conversationHistory) {
+    let prompt = '<|im_start|>system\\n' + systemPrompt + '<|im_end|>\\n';
+
+    // Add conversation history (last 2 exchanges max for context window)
+    const recentHistory = conversationHistory.slice(-4);
+    for (const msg of recentHistory) {
+      prompt += '<|im_start|>' + msg.role + '\\n' + msg.content + '<|im_end|>\\n';
+    }
+
+    prompt += '<|im_start|>user\\n' + userQuestion + '<|im_end|>\\n';
+    prompt += '<|im_start|>assistant\\n';
+
+    return prompt;
+  }
+
+  // Stream response to UI for better UX
+  async function streamResponseToUI(messageEl, responsePromise, sources, codemapDiagram) {
+    const contentEl = messageEl.querySelector('.chat-message-content');
+    if (!contentEl) return;
+
+    try {
+      const result = await responsePromise;
+      let fullResponse = result.answer || result;
+
+      // Add diagram if present
+      if (codemapDiagram) {
+        fullResponse += '\\n\\n**Visual Flow:**\\n\\n\`\`\`mermaid\\n' + codemapDiagram.diagram + '\`\`\`\\n\\n*Click on any box to navigate to that documentation page.*';
+      }
+
+      // Simulate streaming by revealing characters progressively
+      const words = fullResponse.split(' ');
+      let displayed = '';
+
+      for (let i = 0; i < words.length; i++) {
+        displayed += (i > 0 ? ' ' : '') + words[i];
+        const formattedContent = formatChatContent(displayed, sources);
+
+        // Build sources HTML
+        let sourcesHtml = '';
+        if (sources && sources.length > 0) {
+          sourcesHtml = '<div class="chat-message-sources">Sources: ' +
+            sources.map(s => '<a href="' + config.rootPath + s.path + '">' + escapeHtml(s.title) + '</a>').join(', ') +
+            '</div>';
+        }
+
+        contentEl.innerHTML = formattedContent + sourcesHtml;
+
+        // Scroll to bottom
+        const messagesContainer = document.querySelector('.chat-messages');
+        if (messagesContainer) {
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // Small delay between words for streaming effect
+        if (i < words.length - 1) {
+          await new Promise(r => setTimeout(r, 15));
+        }
+      }
+
+      return fullResponse;
+    } catch (e) {
+      console.error('Streaming error:', e);
+      contentEl.innerHTML = '<p>Sorry, I encountered an error generating a response.</p>';
+      return null;
+    }
+  }
+
   async function generateResponse(question, context) {
     const sources = context.map(c => ({ path: c.path, title: c.title }));
 
@@ -1727,41 +1850,54 @@ export function getClientScripts(features: Features): string {
       codemapDiagram = generateCodemapDiagram(question, context, chatState.mode);
     }
 
-    // Build context string
-    const contextText = context.map(c =>
-      '--- ' + c.title + ' ---\\n' + c.content
-    ).join('\\n\\n');
+    // Build context string - summarize for token efficiency
+    const contextText = context.slice(0, 3).map(c => {
+      // Truncate content to most relevant portion
+      const content = c.content.length > 800 ? c.content.slice(0, 800) + '...' : c.content;
+      return '## ' + c.title + '\\n' + content;
+    }).join('\\n\\n');
 
-    // If we have the model, use it
+    // If we have the model, use it for real inference
     if (chatState.generator) {
       try {
-        const systemPrompt = \`You are a helpful documentation assistant. Answer questions based on the provided documentation context. Be concise and accurate. If the context doesn't contain enough information to answer, say so.
+        const systemPrompt = 'You are a helpful documentation assistant for this project. Answer based on the documentation below. Be concise, accurate, and helpful. Reference specific sections when relevant. If unsure, say so.\\n\\n' + contextText;
 
-Documentation Context:
-\${contextText}\`;
+        // Format prompt using SmolLM2 chat template
+        const formattedPrompt = formatChatPrompt(
+          systemPrompt,
+          question,
+          chatState.messages
+        );
 
-        const messages = [
-          { role: 'system', content: systemPrompt },
-          ...chatState.messages.slice(-4), // Include recent conversation for context
-          { role: 'user', content: question }
-        ];
+        console.log('Generating response with prompt length:', formattedPrompt.length);
 
-        const output = await chatState.generator(messages, {
-          max_new_tokens: 300,
+        // Generate with proper parameters for SmolLM2
+        const output = await chatState.generator(formattedPrompt, {
+          max_new_tokens: 256,
           temperature: 0.7,
           do_sample: true,
-          top_p: 0.9
+          top_p: 0.9,
+          repetition_penalty: 1.1,
+          return_full_text: false  // Only return the generated part
         });
 
-        const generatedText = output[0].generated_text;
-        // Extract the assistant's response (last message)
-        let assistantResponse = typeof generatedText === 'string'
-          ? generatedText
-          : generatedText[generatedText.length - 1]?.content || 'I could not generate a response.';
+        let assistantResponse = '';
 
-        // Add diagram if this was a trace question
-        if (codemapDiagram) {
-          assistantResponse += '\\n\\n**Visual Flow:**\\n\\n\`\`\`mermaid\\n' + codemapDiagram.diagram + '\`\`\`\\n\\n*Click on any box to navigate to that documentation page.*';
+        if (output && output[0]) {
+          // Get generated text
+          assistantResponse = output[0].generated_text || '';
+
+          // Clean up response - remove any trailing special tokens
+          assistantResponse = assistantResponse
+            .replace(/<\\|im_end\\|>/g, '')
+            .replace(/<\\|im_start\\|>/g, '')
+            .replace(/<\\|endoftext\\|>/g, '')
+            .trim();
+        }
+
+        if (!assistantResponse || assistantResponse.length < 10) {
+          // Model produced empty/short output, use intelligent fallback
+          assistantResponse = generateIntelligentFallback(question, context);
         }
 
         return { answer: assistantResponse, sources, diagram: codemapDiagram };
@@ -1771,40 +1907,79 @@ Documentation Context:
       }
     }
 
-    // Fallback: Generate a response based on found context
-    if (context.length > 0) {
-      const topResult = context[0];
-      let answer = 'Based on the documentation, here\\'s what I found:\\n\\n';
+    // Intelligent fallback for when model fails or is unavailable
+    const fallbackAnswer = generateIntelligentFallback(question, context);
+    return { answer: fallbackAnswer, sources, diagram: codemapDiagram };
+  }
 
-      // Extract relevant sentences from the top result
-      const sentences = topResult.content.split(/[.!?]+/).filter(s => s.trim().length > 20);
-      const questionWords = question.toLowerCase().split(/\\s+/);
-
-      const relevantSentences = sentences.filter(s =>
-        questionWords.some(w => s.toLowerCase().includes(w))
-      ).slice(0, 3);
-
-      if (relevantSentences.length > 0) {
-        answer += relevantSentences.join('. ').trim() + '.';
-      } else {
-        answer += sentences.slice(0, 2).join('. ').trim() + '.';
-      }
-
-      // Add diagram if this was a trace question
-      if (codemapDiagram) {
-        answer += '\\n\\n**Visual Flow:**\\n\\n\`\`\`mermaid\\n' + codemapDiagram.diagram + '\`\`\`\\n\\n*Click on any box to navigate to that documentation page.*';
-      } else {
-        answer += '\\n\\nFor more details, check the linked sources above.';
-      }
-
-      return { answer, sources, diagram: codemapDiagram };
+  // Generate an intelligent response without the LLM
+  function generateIntelligentFallback(question, context) {
+    if (context.length === 0) {
+      return 'I couldn\\'t find specific information about that in the documentation. Try browsing the navigation menu or using the search feature to explore the available content.';
     }
 
-    return {
-      answer: 'I couldn\\'t find specific information about that in the documentation. Try browsing the navigation menu or using the search feature to explore the available content.',
-      sources: [],
-      diagram: null
-    };
+    const questionLower = question.toLowerCase();
+    const topResult = context[0];
+
+    // Detect question type for better response framing
+    const isHowQuestion = /^how/i.test(question);
+    const isWhatQuestion = /^what/i.test(question);
+    const isWhyQuestion = /^why/i.test(question);
+    const isWhereQuestion = /^where/i.test(question);
+
+    let answer = '';
+
+    // Frame the response based on question type
+    if (isHowQuestion) {
+      answer = 'Here\\'s how this works based on the documentation:\\n\\n';
+    } else if (isWhatQuestion) {
+      answer = 'Based on the documentation:\\n\\n';
+    } else if (isWhyQuestion) {
+      answer = 'According to the documentation, the reason is:\\n\\n';
+    } else if (isWhereQuestion) {
+      answer = 'You can find this in:\\n\\n';
+    } else {
+      answer = 'Here\\'s what I found in the documentation:\\n\\n';
+    }
+
+    // Extract relevant sentences using keyword matching
+    const sentences = topResult.content.split(/[.!?]+/).filter(s => s.trim().length > 20);
+    const questionWords = questionLower.split(/\\s+/).filter(w => w.length > 3);
+
+    // Score sentences by relevance
+    const scoredSentences = sentences.map(s => {
+      const sLower = s.toLowerCase();
+      let score = 0;
+      for (const word of questionWords) {
+        if (sLower.includes(word)) score += 1;
+      }
+      return { text: s.trim(), score };
+    }).filter(s => s.score > 0).sort((a, b) => b.score - a.score);
+
+    // Build response from top sentences
+    if (scoredSentences.length > 0) {
+      const topSentences = scoredSentences.slice(0, 3).map(s => s.text);
+      answer += '**From "' + topResult.title + '":**\\n';
+      answer += topSentences.join('. ') + '.';
+    } else {
+      // No good matches, show summary of top result
+      answer += '**' + topResult.title + '** covers this topic.\\n\\n';
+      answer += sentences.slice(0, 2).join('. ') + '.';
+    }
+
+    // Add additional context from other results
+    if (context.length > 1) {
+      answer += '\\n\\n**Related documentation:**\\n';
+      for (let i = 1; i < Math.min(context.length, 3); i++) {
+        answer += '- **' + context[i].title + '**: ';
+        const firstSentence = context[i].content.split(/[.!?]/)[0];
+        answer += firstSentence.trim().slice(0, 100) + '...\\n';
+      }
+    }
+
+    answer += '\\n\\nSee the linked sources above for complete details.';
+
+    return answer;
   }
   ` : ''}
 

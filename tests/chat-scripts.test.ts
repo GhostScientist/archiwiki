@@ -156,19 +156,24 @@ describe('Chat Client Scripts', () => {
     });
   });
 
-  describe('Typing Indicator', () => {
+  describe('Streaming Response Indicator', () => {
     const scripts = getClientScripts({ aiChat: true });
 
-    it('should create typing indicator element', () => {
-      expect(scripts).toContain("typingEl.className = 'chat-typing'");
+    it('should create streaming response element', () => {
+      expect(scripts).toContain("streaming-indicator");
     });
 
-    it('should include typing dots in indicator', () => {
-      expect(scripts).toContain('chat-typing-dot');
+    it('should include streaming dot and text', () => {
+      expect(scripts).toContain('streaming-dot');
+      expect(scripts).toContain('streaming-text');
     });
 
-    it('should remove typing indicator after response', () => {
-      expect(scripts).toContain('typingEl.remove()');
+    it('should show thinking state initially', () => {
+      expect(scripts).toContain('Thinking...');
+    });
+
+    it('should update to generating state', () => {
+      expect(scripts).toContain('Generating response...');
     });
   });
 
@@ -239,26 +244,34 @@ describe('Chat Client Scripts', () => {
     const scripts = getClientScripts({ aiChat: true });
 
     it('should build context from search results', () => {
-      expect(scripts).toContain("--- ' + c.title + ' ---");
+      expect(scripts).toContain("## ' + c.title");
     });
 
     it('should include system prompt', () => {
       expect(scripts).toContain('documentation assistant');
-      expect(scripts).toContain('Be concise and accurate');
+      expect(scripts).toContain('Be concise, accurate');
     });
 
-    it('should include conversation history', () => {
-      expect(scripts).toContain('chatState.messages.slice(-4)');
+    it('should format prompt with SmolLM2 chat template', () => {
+      expect(scripts).toContain('formatChatPrompt');
+      expect(scripts).toContain('<|im_start|>');
+      expect(scripts).toContain('<|im_end|>');
+    });
+
+    it('should include conversation history in prompt', () => {
+      expect(scripts).toContain('conversationHistory.slice(-4)');
     });
 
     it('should configure generation parameters', () => {
       expect(scripts).toContain('max_new_tokens');
       expect(scripts).toContain('temperature');
       expect(scripts).toContain('do_sample');
+      expect(scripts).toContain('repetition_penalty');
     });
 
-    it('should handle fallback response generation', () => {
-      expect(scripts).toContain("Based on the documentation");
+    it('should handle intelligent fallback response', () => {
+      expect(scripts).toContain("generateIntelligentFallback");
+      expect(scripts).toContain("Here\\'s what I found");
     });
 
     it('should provide no-result fallback', () => {

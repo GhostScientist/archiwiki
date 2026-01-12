@@ -2186,6 +2186,47 @@ tr:hover {
   }
 }
 
+/* Streaming response indicator */
+.chat-message.streaming .chat-message-content {
+  min-height: 40px;
+}
+
+.streaming-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.streaming-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  animation: streamingPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes streamingPulse {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+.streaming-text {
+  animation: streamingFade 2s ease-in-out infinite;
+}
+
+@keyframes streamingFade {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
 .chat-input-area {
   display: flex;
   gap: var(--spacing-sm);
