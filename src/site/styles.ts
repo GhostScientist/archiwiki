@@ -33,6 +33,11 @@ export function getStyles(): string {
   --color-warning: #737373;
   --color-error: #525252;
 
+  /* Luxurious purple link colors */
+  --color-link: #9333ea;
+  --color-link-hover: #7c3aed;
+  --color-link-visited: #a855f7;
+
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
@@ -92,6 +97,11 @@ export function getStyles(): string {
   --color-primary: #d4d4d4;
   --color-primary-hover: #fafafa;
   --color-primary-light: #262626;
+
+  /* Luxurious purple link colors for dark mode */
+  --color-link: #c084fc;
+  --color-link-hover: #d8b4fe;
+  --color-link-visited: #a78bfa;
 }
 
 /* Auto theme (system preference) - Monochromatic */
@@ -108,6 +118,11 @@ export function getStyles(): string {
     --color-primary: #d4d4d4;
     --color-primary-hover: #fafafa;
     --color-primary-light: #262626;
+
+    /* Luxurious purple link colors for auto dark mode */
+    --color-link: #c084fc;
+    --color-link-hover: #d8b4fe;
+    --color-link-visited: #a78bfa;
   }
 }
 
@@ -346,8 +361,9 @@ body {
   background: var(--color-success);
 }
 
-/* Progress indicator */
+/* Progress indicator - hidden by default (can be enabled via setting) */
 .progress-indicator {
+  display: none; /* Hidden - obtrusive for users */
   position: absolute;
   bottom: var(--spacing-lg);
   left: var(--spacing-lg);
@@ -356,6 +372,11 @@ body {
   background: var(--color-bg);
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
+}
+
+/* Enable progress tracker with data attribute if needed */
+[data-show-progress="true"] .progress-indicator {
+  display: block;
 }
 
 .progress-bar {
@@ -501,13 +522,39 @@ p {
 }
 
 a {
-  color: var(--color-primary);
+  color: var(--color-link);
   text-decoration: none;
-  transition: color var(--transition-fast);
+  font-weight: 500;
+  transition: all var(--transition-fast);
 }
 
 a:hover {
-  color: var(--color-primary-hover);
+  color: var(--color-link-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+a:visited {
+  color: var(--color-link-visited);
+}
+
+/* Content links - make them more prominent */
+.page-content a:not(.anchor-link):not(.source-link) {
+  background: linear-gradient(to bottom, transparent 60%, rgba(147, 51, 234, 0.15) 60%);
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.page-content a:not(.anchor-link):not(.source-link):hover {
+  background: linear-gradient(to bottom, transparent 40%, rgba(147, 51, 234, 0.25) 40%);
+}
+
+[data-theme="dark"] .page-content a:not(.anchor-link):not(.source-link) {
+  background: linear-gradient(to bottom, transparent 60%, rgba(192, 132, 252, 0.2) 60%);
+}
+
+[data-theme="dark"] .page-content a:not(.anchor-link):not(.source-link):hover {
+  background: linear-gradient(to bottom, transparent 40%, rgba(192, 132, 252, 0.3) 40%);
 }
 
 .external-link {
@@ -2377,24 +2424,34 @@ body.chat-resizing .site-container {
   font-size: var(--text-sm);
 }
 
-/* Distinct link styling in chat responses */
+/* Distinct link styling in chat responses - luxurious purple */
 .chat-message-content a:not(.source-link) {
-  color: var(--color-primary);
+  color: var(--color-link);
   text-decoration: none;
-  border-bottom: 1px solid currentColor;
-  padding-bottom: 1px;
+  background: linear-gradient(to bottom, transparent 60%, rgba(147, 51, 234, 0.2) 60%);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-weight: 500;
   transition: all var(--transition-fast);
 }
 
 .chat-message-content a:not(.source-link):hover {
-  color: var(--color-primary-hover);
-  border-bottom-width: 2px;
+  color: var(--color-link-hover);
+  background: rgba(147, 51, 234, 0.15);
 }
 
 .chat-message-content a:not(.source-link)::after {
   content: ' →';
   font-size: 0.85em;
   opacity: 0.7;
+}
+
+[data-theme="dark"] .chat-message-content a:not(.source-link) {
+  background: linear-gradient(to bottom, transparent 60%, rgba(192, 132, 252, 0.25) 60%);
+}
+
+[data-theme="dark"] .chat-message-content a:not(.source-link):hover {
+  background: rgba(192, 132, 252, 0.2);
 }
 
 /* SPA navigation loading state */

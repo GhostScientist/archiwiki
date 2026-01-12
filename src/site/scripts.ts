@@ -52,6 +52,7 @@ export function getClientScripts(features: Features): string {
     initMermaid();
     initSourceLinks();
     initTocHighlight();
+    initSPANavigation();
 
     ${features.search ? 'initSearch();' : ''}
     ${features.guidedTour ? 'initTours();' : ''}
@@ -245,6 +246,159 @@ export function getClientScripts(features: Features): string {
     }, { rootMargin: '-100px 0px -66%' });
 
     headings.forEach(h => observer.observe(h));
+  }
+
+  // ========================================
+  // SPA Navigation (no page reload for internal links)
+  // ========================================
+  function initSPANavigation() {
+    // Intercept clicks on internal links for SPA-like navigation
+    document.addEventListener('click', async (e) => {
+      const link = e.target.closest('a[href]');
+      if (!link) return;
+
+      // Skip if modifier keys are pressed (let browser handle normally)
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+
+      // Skip anchor links (same page)
+      if (link.getAttribute('href')?.startsWith('#')) return;
+
+      // Skip external links
+      const linkUrl = new URL(link.href, window.location.origin);
+      if (linkUrl.origin !== window.location.origin) return;
+
+      // Skip non-HTML links (downloads, etc.)
+      if (link.getAttribute('download')) return;
+
+      // Skip links with target="_blank"
+      if (link.target === '_blank') return;
+
+      // Skip source links (handled separately)
+      if (link.classList.contains('source-link') || link.classList.contains('code-source')) return;
+
+      // Check if it's an internal wiki link (.html file)
+      const path = linkUrl.pathname;
+      if (!path.endsWith('.html') && !path.endsWith('/')) return;
+
+      // Prevent default and navigate via SPA
+      e.preventDefault();
+      await navigateSPA(link.href, link);
+    });
+
+    // Handle browser back/forward
+    window.addEventListener('popstate', async (e) => {
+      if (e.state?.spaUrl) {
+        await navigateSPA(e.state.spaUrl, null, true);
+      }
+    });
+  }
+
+  async function navigateSPA(url, linkElement, isPopState = false) {
+    // Add loading state to clicked link
+    if (linkElement) {
+      linkElement.classList.add('loading');
+    }
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Page not found');
+
+      const html = await response.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+
+      // Extract key elements from new page
+      const newContent = doc.querySelector('.page-content');
+      const newTitle = doc.querySelector('title')?.textContent || 'Documentation';
+      const newToc = doc.querySelector('.toc-list');
+      const newBreadcrumbs = doc.querySelector('.breadcrumbs');
+
+      const currentContent = document.querySelector('.page-content');
+      const currentToc = document.querySelector('.toc-list');
+      const currentBreadcrumbs = document.querySelector('.breadcrumbs');
+
+      if (newContent && currentContent) {
+        // Smooth transition
+        currentContent.style.opacity = '0.5';
+
+        // Small delay for visual feedback
+        await new Promise(r => setTimeout(r, 100));
+
+        // Update content
+        currentContent.innerHTML = newContent.innerHTML;
+        currentContent.style.opacity = '1';
+
+        // Update TOC if present
+        if (newToc && currentToc) {
+          currentToc.innerHTML = newToc.innerHTML;
+        }
+
+        // Update breadcrumbs if present
+        if (newBreadcrumbs && currentBreadcrumbs) {
+          currentBreadcrumbs.innerHTML = newBreadcrumbs.innerHTML;
+        }
+
+        // Update title
+        document.title = newTitle;
+
+        // Update URL (don't push state if this is a popstate navigation)
+        if (!isPopState) {
+          window.history.pushState({ spaUrl: url }, newTitle, url);
+        }
+
+        // Update config.currentPath for other features
+        const urlPath = new URL(url).pathname;
+        config.currentPath = urlPath.replace(config.rootPath, '').replace(/^\\//, '');
+
+        // Scroll to top of main content, or to hash if present
+        const hash = new URL(url).hash;
+        if (hash) {
+          const targetEl = document.querySelector(hash);
+          if (targetEl) {
+            targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        } else {
+          document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Update active nav item
+        document.querySelectorAll('.nav-item').forEach(item => {
+          item.classList.remove('active');
+          const navLink = item.querySelector('a');
+          if (navLink && (navLink.href === url || navLink.getAttribute('href') === urlPath)) {
+            item.classList.add('active');
+          }
+        });
+
+        // Re-initialize dynamic features
+        if (window.mermaid) {
+          document.querySelectorAll('.page-content .mermaid:not([data-processed])').forEach(el => {
+            try {
+              window.mermaid.init(undefined, el);
+            } catch (err) {
+              console.warn('Mermaid init error:', err);
+            }
+          });
+        }
+
+        if (window.Prism) {
+          Prism.highlightAllUnder(currentContent);
+        }
+
+        // Reinitialize TOC highlighting
+        initTocHighlight();
+
+        showToast('Navigated to: ' + newTitle.split(' | ')[0], 'success');
+      }
+    } catch (error) {
+      console.error('SPA navigation failed:', error);
+      // Fallback to traditional navigation
+      window.location.href = url;
+    } finally {
+      if (linkElement) {
+        linkElement.classList.remove('loading');
+      }
+    }
   }
 
   // ========================================
@@ -1334,16 +1488,23 @@ export function getClientScripts(features: Features): string {
         ? response.answer + '\\n\\n**Visual Flow:**\\n\\n\`\`\`mermaid\\n' + response.diagram.diagram + '\`\`\`\\n\\n*Click on any box to navigate to that documentation page.*'
         : response.answer;
 
-      // Build sources HTML
+      // Build sources HTML with section targeting
       let sourcesHtml = '';
       if (response.sources && response.sources.length > 0) {
         sourcesHtml = '<div class="chat-message-sources"><span class="sources-label">📚 Related docs:</span><div class="sources-list">' +
-          response.sources.map(s =>
-            '<a href="' + config.rootPath + s.path + '" class="source-link" title="' + escapeHtml(s.title) + '">' +
-            '<span class="source-icon">📄</span>' +
-            '<span class="source-title">' + escapeHtml(s.title) + '</span>' +
-            '</a>'
-          ).join('') +
+          response.sources.map(s => {
+            // Build URL with section anchor if available
+            const url = config.rootPath + s.path + (s.sectionAnchor ? '#' + s.sectionAnchor : '');
+            // Display section title if different from page title, otherwise show page title
+            const displayTitle = s.sectionTitle && s.sectionTitle !== s.title
+              ? s.title + ' → ' + s.sectionTitle
+              : s.title;
+            const shortDisplay = displayTitle.length > 35 ? displayTitle.slice(0, 32) + '...' : displayTitle;
+            return '<a href="' + url + '" class="source-link" title="' + escapeHtml(displayTitle) + '">' +
+              '<span class="source-icon">📄</span>' +
+              '<span class="source-title">' + escapeHtml(shortDisplay) + '</span>' +
+              '</a>';
+          }).join('') +
           '</div></div>';
       }
 
@@ -1527,6 +1688,42 @@ export function getClientScripts(features: Features): string {
     return formatted;
   }
 
+  // Convert a heading text to an anchor ID (matching how we generate anchors in the wiki)
+  function headingToAnchor(heading) {
+    return heading
+      .toLowerCase()
+      .replace(/[^a-z0-9\\s-]/g, '')
+      .replace(/\\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+  }
+
+  // Extract the most relevant section heading from content
+  function extractRelevantSection(content, query) {
+    const headings = content.match(/^#+\\s+(.+)$/gm) || [];
+    const queryWords = query.toLowerCase().split(/\\s+/).filter(w => w.length > 2);
+
+    let bestHeading = null;
+    let bestScore = 0;
+
+    for (const h of headings) {
+      const headingText = h.replace(/^#+\\s+/, '');
+      const headingLower = headingText.toLowerCase();
+      let score = 0;
+
+      for (const word of queryWords) {
+        if (headingLower.includes(word)) score++;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestHeading = headingText;
+      }
+    }
+
+    return bestHeading ? { text: bestHeading, anchor: headingToAnchor(bestHeading) } : null;
+  }
+
   async function findRelevantContext(question) {
     const results = [];
     const questionLower = question.toLowerCase();
@@ -1549,11 +1746,15 @@ export function getClientScripts(features: Features): string {
 
         for (const chunk of topChunks) {
           if (chunk.score > 0.3) { // Relevance threshold
+            // Try to extract section anchor for more targeted linking
+            const section = extractRelevantSection(chunk.content, question);
             results.push({
               path: chunk.path,
               title: chunk.title,
               content: chunk.content,
-              score: chunk.score
+              score: chunk.score,
+              sectionAnchor: section?.anchor || chunk.sectionAnchor,
+              sectionTitle: section?.text || chunk.sectionTitle
             });
           }
         }
@@ -1571,10 +1772,18 @@ export function getClientScripts(features: Features): string {
         const titleLower = page.title.toLowerCase();
 
         let score = 0;
+        let matchedHeading = null;
+
         for (const kw of keywords) {
           if (titleLower.includes(kw)) score += 3;
           if (contentLower.includes(kw)) score += 1;
-          if (page.headings.some(h => h.toLowerCase().includes(kw))) score += 2;
+          // Check headings and track which one matched best
+          for (const h of page.headings) {
+            if (h.toLowerCase().includes(kw)) {
+              score += 2;
+              matchedHeading = h;
+            }
+          }
         }
 
         if (score > 0 && !results.some(r => r.path === page.path)) {
@@ -1582,7 +1791,9 @@ export function getClientScripts(features: Features): string {
             path: page.path,
             title: page.title,
             content: page.content.slice(0, 1500),
-            score
+            score,
+            sectionAnchor: matchedHeading ? headingToAnchor(matchedHeading) : null,
+            sectionTitle: matchedHeading
           });
         }
       }
@@ -1691,6 +1902,38 @@ export function getClientScripts(features: Features): string {
     return relationships;
   }
 
+  // Extract a meaningful section title from content chunk
+  function extractSectionTitle(content, pageTitle) {
+    // Try to find a heading in the content
+    const headingMatch = content.match(/^#+\\s+(.+)$/m) || content.match(/^(.{10,50}?)(?:\\n|\\.|:)/);
+    if (headingMatch) {
+      let heading = headingMatch[1].trim();
+      // Clean up markdown formatting
+      heading = heading.replace(/[*_#\`]/g, '').trim();
+      if (heading.length > 5 && heading.length < 50 && heading !== pageTitle) {
+        return heading;
+      }
+    }
+
+    // Try to extract key concept from first sentence
+    const firstSentence = content.split(/[.!?\\n]/)[0].trim();
+    if (firstSentence.length > 10 && firstSentence.length < 60) {
+      // Extract key noun phrases
+      const keyPhrases = firstSentence.match(/(?:the\\s+)?([A-Z][a-z]+(?:\\s+[A-Z]?[a-z]+){0,2})/);
+      if (keyPhrases && keyPhrases[1] && keyPhrases[1] !== pageTitle) {
+        return keyPhrases[1];
+      }
+    }
+
+    // Try extracting from code identifiers
+    const codeMatch = content.match(/(?:class|function|interface|type|const|export)\\s+([A-Za-z_][A-Za-z0-9_]*)/);
+    if (codeMatch && codeMatch[1]) {
+      return codeMatch[1];
+    }
+
+    return null;
+  }
+
   // Generate a mermaid flowchart from context
   function generateCodemapDiagram(question, context, mode) {
     if (context.length < 2) return null;
@@ -1698,18 +1941,52 @@ export function getClientScripts(features: Features): string {
     const diagramType = detectDiagramType(question, context);
     const nodes = [];
     const nodeIds = new Map();
+    const titleCounts = new Map(); // Track duplicate titles
 
-    // Create nodes from each context item
+    // First pass: count title occurrences
+    context.forEach(item => {
+      const count = titleCounts.get(item.title) || 0;
+      titleCounts.set(item.title, count + 1);
+    });
+
+    // Create nodes from each context item with unique titles
+    const usedTitles = new Map(); // Track index for duplicate titles
     context.forEach((item, i) => {
       const nodeId = 'N' + i;
-      const shortTitle = item.title.length > 25 ? item.title.slice(0, 22) + '...' : item.title;
-      nodeIds.set(item.path, nodeId);
+      let displayTitle = item.title;
+
+      // If this title appears multiple times, try to make it unique
+      if (titleCounts.get(item.title) > 1) {
+        // Try to extract a section-specific title from content
+        const sectionTitle = extractSectionTitle(item.content, item.title);
+        if (sectionTitle) {
+          displayTitle = sectionTitle;
+        } else {
+          // Use index suffix to differentiate
+          const idx = (usedTitles.get(item.title) || 0) + 1;
+          usedTitles.set(item.title, idx);
+          // Try to extract key terms from content for better label
+          const keyTerms = item.content.match(/\\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\\b/); // CamelCase
+          if (keyTerms) {
+            displayTitle = keyTerms[1];
+          } else {
+            displayTitle = item.title + ' §' + idx;
+          }
+        }
+      }
+
+      // Truncate for display
+      const shortTitle = displayTitle.length > 28 ? displayTitle.slice(0, 25) + '...' : displayTitle;
+
+      nodeIds.set(item.path + '_' + i, nodeId);
       nodes.push({
         id: nodeId,
         title: shortTitle,
         path: item.path,
         fullTitle: item.title,
-        score: item.score || 0
+        sectionTitle: displayTitle,
+        score: item.score || 0,
+        content: item.content
       });
     });
 
@@ -1885,7 +2162,13 @@ export function getClientScripts(features: Features): string {
   }
 
   async function generateResponse(question, context) {
-    const sources = context.map(c => ({ path: c.path, title: c.title }));
+    // Map context to sources, including section anchors for targeted linking
+    const sources = context.map(c => ({
+      path: c.path,
+      title: c.title,
+      sectionAnchor: c.sectionAnchor || null,
+      sectionTitle: c.sectionTitle || null
+    }));
 
     // Determine if we should show visualization based on mode and question type
     const isTraceQ = isTraceQuestion(question);
