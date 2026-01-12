@@ -1079,11 +1079,34 @@ Create all ${missingPages.length} missing pages now.`;
             return 'No relevant code found for this query.';
           }
 
-          const formatted = results.map((r, i) =>
-            `### Result ${i + 1} (score: ${r.score.toFixed(3)})\n` +
-            `**Source:** \`${r.filePath}:${r.startLine}-${r.endLine}\`\n\n` +
-            '```' + (r.language || '') + '\n' + r.content + '\n```'
-          ).join('\n\n');
+          const formatted = results.map((r, i) => {
+            // Build domain context section if available
+            let domainSection = '';
+            if (r.chunkType || r.name || r.domainCategories?.length) {
+              domainSection = '\n**Domain Context:**\n';
+              if (r.chunkType) domainSection += `- Type: ${r.chunkType}\n`;
+              if (r.name) domainSection += `- Name: ${r.name}\n`;
+              if (r.parentName) domainSection += `- Parent: ${r.parentName}\n`;
+              if (r.domainCategories?.length) {
+                domainSection += `- Business Domains: ${r.domainCategories.join(', ')}\n`;
+              }
+              if (r.signature) domainSection += `- Signature: \`${r.signature}\`\n`;
+              if (r.isPublicApi) domainSection += `- Public API: yes\n`;
+            }
+
+            // Add documentation snippet if available
+            let docSection = '';
+            if (r.documentation) {
+              const docSnippet = r.documentation.slice(0, 300);
+              docSection = `\n**Documentation:**\n\`\`\`\n${docSnippet}${docSnippet.length < r.documentation.length ? '...' : ''}\n\`\`\`\n`;
+            }
+
+            return `### Result ${i + 1} (score: ${r.score.toFixed(3)})\n` +
+              `**Source:** \`${r.filePath}:${r.startLine}-${r.endLine}\`\n` +
+              domainSection +
+              docSection +
+              '\n```' + (r.language || '') + '\n' + r.content + '\n```';
+          }).join('\n\n');
 
           return `Found ${results.length} relevant code snippets:\n\n${formatted}`;
         }
@@ -1103,10 +1126,9 @@ Create all ${missingPages.length} missing pages now.`;
             sources: input.sources
           };
 
-          const fullContent = matter.stringify(
-            `# ${input.title}\n\n${input.content}`,
-            frontmatterData
-          );
+          // Do NOT add H1 title - the site generator adds it from frontmatter
+          // This prevents duplicate titles in the rendered output
+          const fullContent = matter.stringify(input.content, frontmatterData);
 
           fs.writeFileSync(fullPath, fullContent, 'utf-8');
           return `Successfully wrote wiki page: ${input.pagePath}`;
@@ -1508,11 +1530,34 @@ Remember: Every architectural concept MUST include file:line references to the s
               excludeTests: args.excludeTests ?? true
             });
 
-            const formatted = results.map((r, i) =>
-              `### Result ${i + 1} (score: ${r.score.toFixed(3)})\n` +
-              `**Source:** \`${r.filePath}:${r.startLine}-${r.endLine}\`\n\n` +
-              '```' + (r.language || '') + '\n' + r.content + '\n```'
-            ).join('\n\n');
+            const formatted = results.map((r, i) => {
+              // Build domain context section if available
+              let domainSection = '';
+              if (r.chunkType || r.name || r.domainCategories?.length) {
+                domainSection = '\n**Domain Context:**\n';
+                if (r.chunkType) domainSection += `- Type: ${r.chunkType}\n`;
+                if (r.name) domainSection += `- Name: ${r.name}\n`;
+                if (r.parentName) domainSection += `- Parent: ${r.parentName}\n`;
+                if (r.domainCategories?.length) {
+                  domainSection += `- Business Domains: ${r.domainCategories.join(', ')}\n`;
+                }
+                if (r.signature) domainSection += `- Signature: \`${r.signature}\`\n`;
+                if (r.isPublicApi) domainSection += `- Public API: yes\n`;
+              }
+
+              // Add documentation snippet if available
+              let docSection = '';
+              if (r.documentation) {
+                const docSnippet = r.documentation.slice(0, 300);
+                docSection = `\n**Documentation:**\n\`\`\`\n${docSnippet}${docSnippet.length < r.documentation.length ? '...' : ''}\n\`\`\`\n`;
+              }
+
+              return `### Result ${i + 1} (score: ${r.score.toFixed(3)})\n` +
+                `**Source:** \`${r.filePath}:${r.startLine}-${r.endLine}\`\n` +
+                domainSection +
+                docSection +
+                '\n```' + (r.language || '') + '\n' + r.content + '\n```';
+            }).join('\n\n');
 
             return {
               content: [{
@@ -1560,16 +1605,15 @@ Remember: Every architectural concept MUST include file:line references to the s
             }
 
             // Build content with frontmatter
+            // Do NOT add H1 title - the site generator adds it from frontmatter
+            // This prevents duplicate titles in the rendered output
             const frontmatterData: Record<string, any> = {
               title: args.title,
               generated: new Date().toISOString(),
               ...args.frontmatter
             };
 
-            const fullContent = matter.stringify(
-              `# ${args.title}\n\n${args.content}`,
-              frontmatterData
-            );
+            const fullContent = matter.stringify(args.content, frontmatterData);
 
             // Write file
             fs.writeFileSync(fullPath, fullContent, 'utf-8');

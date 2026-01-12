@@ -11,6 +11,13 @@ import { glob } from 'glob';
 import { simpleGit, SimpleGit } from 'simple-git';
 import { createRequire } from 'module';
 import { pipeline, env } from '@huggingface/transformers';
+import {
+  ASTChunker,
+  ASTChunk,
+  ChunkType,
+  DomainCategory,
+  generateDomainContext
+} from '../ast-chunker.js';
 
 // Configure transformers.js to use local cache
 env.cacheDir = './.ted-mosby-models';
@@ -35,6 +42,10 @@ export interface RAGConfig {
   embeddingModel?: string;
   /** Maximum number of chunks to index (for large codebases, limit memory usage) */
   maxChunks?: number;
+  /** Use AST-based chunking for semantic code understanding (default: true) */
+  useASTChunking?: boolean;
+  /** Extract business domain hints from code (default: true) */
+  extractDomainHints?: boolean;
 }
 
 export interface BatchInfo {
@@ -53,6 +64,22 @@ export interface CodeChunk {
   endLine: number;
   content: string;
   language: string;
+  /** Type of code construct (function, class, etc.) */
+  chunkType?: ChunkType;
+  /** Name of the construct */
+  name?: string;
+  /** Parent construct name if nested */
+  parentName?: string;
+  /** Documentation/comments */
+  documentation?: string;
+  /** Inferred business domain categories */
+  domainCategories?: DomainCategory[];
+  /** Domain context string for embedding enrichment */
+  domainContext?: string;
+  /** Whether this is a public API */
+  isPublicApi?: boolean;
+  /** Function/method signature */
+  signature?: string;
 }
 
 export interface SearchResult extends CodeChunk {
@@ -72,6 +99,22 @@ interface StoredMetadata {
   endLine: number;
   content: string;
   language: string;
+  /** Type of code construct */
+  chunkType?: ChunkType;
+  /** Name of the construct */
+  name?: string;
+  /** Parent construct name */
+  parentName?: string;
+  /** Documentation/comments */
+  documentation?: string;
+  /** Inferred business domain categories */
+  domainCategories?: DomainCategory[];
+  /** Domain context for embedding enrichment */
+  domainContext?: string;
+  /** Whether this is public API */
+  isPublicApi?: boolean;
+  /** Function/method signature */
+  signature?: string;
 }
 
 interface IndexState {
@@ -124,13 +167,23 @@ export class RAGSystem {
   private embeddingDimension = 384;  // all-MiniLM-L6-v2 dimension
   private documentCount = 0;
   private indexState: IndexState | null = null;
+  private astChunker: ASTChunker;
 
   constructor(config: RAGConfig) {
     this.config = {
       chunkSize: 1500,
       chunkOverlap: 200,
+      useASTChunking: true,  // Enable AST chunking by default
+      extractDomainHints: true,  // Extract domain hints by default
       ...config
     };
+
+    // Initialize AST chunker
+    this.astChunker = new ASTChunker({
+      maxChunkSize: this.config.chunkSize,
+      minChunkSize: 100,
+      extractDomainHints: this.config.extractDomainHints
+    });
 
     // Ensure cache directory exists
     if (!fs.existsSync(this.config.storePath)) {
@@ -283,13 +336,22 @@ export class RAGSystem {
       for (let i = 0; i < embeddings.length; i++) {
         const normalized = this.normalizeVector(embeddings[i]);
         normalizedEmbeddings.push(normalized);
+        const chunk = chunksToIndex[i];
         this.metadata.set(i, {
-          id: chunksToIndex[i].id,
-          filePath: chunksToIndex[i].filePath,
-          startLine: chunksToIndex[i].startLine,
-          endLine: chunksToIndex[i].endLine,
-          content: chunksToIndex[i].content,
-          language: chunksToIndex[i].language
+          id: chunk.id,
+          filePath: chunk.filePath,
+          startLine: chunk.startLine,
+          endLine: chunk.endLine,
+          content: chunk.content,
+          language: chunk.language,
+          chunkType: chunk.chunkType,
+          name: chunk.name,
+          parentName: chunk.parentName,
+          documentation: chunk.documentation,
+          domainCategories: chunk.domainCategories,
+          domainContext: chunk.domainContext,
+          isPublicApi: chunk.isPublicApi,
+          signature: chunk.signature
         });
       }
 
@@ -340,7 +402,15 @@ export class RAGSystem {
           startLine: chunk.startLine,
           endLine: chunk.endLine,
           content: chunk.content,
-          language: chunk.language
+          language: chunk.language,
+          chunkType: chunk.chunkType,
+          name: chunk.name,
+          parentName: chunk.parentName,
+          documentation: chunk.documentation,
+          domainCategories: chunk.domainCategories,
+          domainContext: chunk.domainContext,
+          isPublicApi: chunk.isPublicApi,
+          signature: chunk.signature
         });
       });
     }
@@ -399,7 +469,7 @@ export class RAGSystem {
   }
 
   /**
-   * Chunk a file into logical segments
+   * Chunk a file into logical segments using AST analysis or fallback line-based chunking
    */
   private async chunkFile(filePath: string): Promise<CodeChunk[]> {
     const fullPath = path.join(this.config.repoPath, filePath);
@@ -408,12 +478,45 @@ export class RAGSystem {
     const ext = path.extname(filePath);
     const language = this.getLanguage(ext);
 
+    // Try AST-based chunking first if enabled
+    if (this.config.useASTChunking) {
+      try {
+        const astChunks = await this.astChunker.chunkFile(filePath, this.config.repoPath);
+
+        // Convert ASTChunk to CodeChunk with domain context
+        return astChunks.map(astChunk => {
+          const domainCategories = astChunk.domainHints
+            ?.filter(h => h.confidence > 0.3)
+            .map(h => h.category);
+
+          return {
+            id: astChunk.id,
+            filePath: astChunk.filePath,
+            startLine: astChunk.startLine,
+            endLine: astChunk.endLine,
+            content: astChunk.content,
+            language: astChunk.language,
+            chunkType: astChunk.chunkType,
+            name: astChunk.name,
+            parentName: astChunk.parentName,
+            documentation: astChunk.documentation,
+            domainCategories,
+            domainContext: generateDomainContext(astChunk),
+            isPublicApi: astChunk.isPublicApi,
+            signature: astChunk.signature
+          };
+        });
+      } catch (err) {
+        // Fall back to line-based chunking if AST parsing fails
+        console.warn(`  AST chunking failed for ${filePath}, using line-based: ${err}`);
+      }
+    }
+
+    // Fallback: Line-based chunking
     const chunks: CodeChunk[] = [];
     const chunkSize = this.config.chunkSize!;
     const overlap = this.config.chunkOverlap!;
 
-    // Simple line-based chunking with overlap
-    // TODO: Enhance with AST-aware chunking for better boundaries
     let startLine = 0;
 
     while (startLine < lines.length) {
@@ -465,6 +568,9 @@ export class RAGSystem {
   /**
    * Generate embeddings for code chunks using local Transformers.js model
    * Uses all-MiniLM-L6-v2 - a fast, high-quality embedding model
+   *
+   * When domain context is available, prepends it to improve retrieval quality
+   * by making the embedding more semantically aware of the code's purpose.
    */
   private async generateEmbeddings(chunks: CodeChunk[]): Promise<number[][]> {
     const embeddings: number[][] = [];
@@ -478,9 +584,27 @@ export class RAGSystem {
       try {
         // Generate embeddings for the batch
         for (const chunk of batch) {
-          // Truncate content to avoid memory issues (model max is 512 tokens)
-          const text = chunk.content.slice(0, 2000);
-          const output = await extractor(text, { pooling: 'mean', normalize: true });
+          // Build embedding text with domain context for better semantic retrieval
+          // Domain context helps the model understand what the code does, not just what it is
+          let textForEmbedding = '';
+
+          // Prepend domain context if available
+          if (chunk.domainContext) {
+            textForEmbedding = `${chunk.domainContext}\n\n`;
+          }
+
+          // Add documentation if available (often describes purpose)
+          if (chunk.documentation) {
+            const docSnippet = chunk.documentation.slice(0, 300);
+            textForEmbedding += `${docSnippet}\n\n`;
+          }
+
+          // Add the code content
+          // Truncate total to avoid memory issues (model max is 512 tokens)
+          const remainingBudget = 2000 - textForEmbedding.length;
+          textForEmbedding += chunk.content.slice(0, Math.max(remainingBudget, 500));
+
+          const output = await extractor(textForEmbedding, { pooling: 'mean', normalize: true });
           // Convert to array
           embeddings.push(Array.from(output.data));
         }

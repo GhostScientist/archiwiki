@@ -334,12 +334,22 @@ export class SiteGenerator {
       const extractedTitle = this.extractTitle(markdownContent);
       const title = frontmatter.title || extractedTitle || path.basename(filePath, '.md');
 
-      // Remove the first H1 if it matches the title to prevent duplication
-      // The title will be displayed in the page header template
+      // Always remove the first H1 if it exists and matches the title to prevent duplication
+      // The title will be displayed in the page header template regardless of source
       let contentWithoutTitle = markdownContent;
-      if (!frontmatter.title && extractedTitle) {
-        // Remove the first H1 line from content
-        contentWithoutTitle = markdownContent.replace(/^#\s+.+\n+/, '');
+      if (extractedTitle) {
+        // Normalize both titles for comparison (case-insensitive, trim whitespace)
+        const normalizedFrontmatter = (frontmatter.title || '').toLowerCase().trim();
+        const normalizedExtracted = extractedTitle.toLowerCase().trim();
+
+        // Remove H1 if:
+        // 1. No frontmatter title exists (extracted becomes title), OR
+        // 2. Frontmatter title matches extracted H1 (duplicate), OR
+        // 3. Extracted H1 is present (template will handle title display)
+        if (!frontmatter.title || normalizedFrontmatter === normalizedExtracted || extractedTitle) {
+          // Remove the first H1 line from content (including any trailing newlines)
+          contentWithoutTitle = markdownContent.replace(/^#\s+[^\n]+\n*/, '');
+        }
       }
 
       // Extract headings (after potentially removing title)
