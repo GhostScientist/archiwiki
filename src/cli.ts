@@ -83,6 +83,7 @@ program
   .option('--skip-index', 'Skip indexing and use existing cached index (for debugging agent behavior)')
   .option('--max-turns <number>', 'Maximum agent turns (default 200, lower to reduce cost estimate)', parseInt)
   .option('--direct-api', 'Use Anthropic API directly (bypasses Claude Code billing, uses your API credits)')
+  .option('--ai-chat', 'Enable AI chat feature with semantic search in generated site')
   .action(async (options) => {
     try {
       const configManager = new ConfigManager();
@@ -653,6 +654,7 @@ async function generateStaticSite(options: {
   siteTitle?: string;
   theme?: 'light' | 'dark' | 'auto';
   verbose?: boolean;
+  aiChat?: boolean;
 }) {
   console.log(chalk.cyan.bold('\n🌐 Generating Interactive Static Site\n'));
 
@@ -680,7 +682,8 @@ async function generateStaticSite(options: {
         codeExplorer: true,
         search: true,
         progressTracking: true,
-        keyboardNav: true
+        keyboardNav: true,
+        aiChat: options.aiChat || false
       },
       repoUrl: options.repo || ''
     });
@@ -700,6 +703,10 @@ async function generateStaticSite(options: {
     console.log(chalk.gray('  ✓ Dark/light theme toggle'));
     console.log(chalk.gray('  ✓ Keyboard navigation (press "?" for help)'));
     console.log(chalk.gray('  ✓ Progress tracking'));
+    if (options.aiChat) {
+      console.log(chalk.gray('  ✓ AI Chat with SmolLM2 (browser-based)'));
+      console.log(chalk.gray('  ✓ Semantic search with embeddings'));
+    }
     console.log();
     console.log(chalk.white('To preview locally:'));
     console.log(chalk.gray('  npx serve ' + siteDir));
