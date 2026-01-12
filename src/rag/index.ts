@@ -138,7 +138,16 @@ const INDEXABLE_EXTENSIONS = [
   '.swift',
   '.vue', '.svelte',
   '.json', '.yaml', '.yml', '.toml',
-  '.md', '.mdx'
+  '.md', '.mdx',
+  // Mainframe / COBOL
+  '.cbl', '.cob', '.cobol',  // COBOL source files
+  '.cpy', '.copy',            // COBOL copybooks (like headers/includes)
+  '.jcl',                     // Job Control Language
+  '.pli', '.pl1',             // PL/I
+  '.asm', '.s',               // Assembly
+  '.sql',                     // SQL (embedded or standalone)
+  '.bms',                     // BMS map definitions (CICS)
+  '.prc', '.proc'             // JCL procedures
 ];
 
 // Patterns to exclude
@@ -764,9 +773,24 @@ export class RAGSystem {
       '.json': 'json',
       '.yaml': 'yaml',
       '.yml': 'yaml',
-      '.md': 'markdown'
+      '.md': 'markdown',
+      // Mainframe / COBOL
+      '.cbl': 'cobol',
+      '.cob': 'cobol',
+      '.cobol': 'cobol',
+      '.cpy': 'cobol',      // Copybooks are COBOL
+      '.copy': 'cobol',
+      '.jcl': 'jcl',
+      '.pli': 'pli',
+      '.pl1': 'pli',
+      '.asm': 'asm',
+      '.s': 'asm',
+      '.sql': 'sql',
+      '.bms': 'bms',
+      '.prc': 'jcl',
+      '.proc': 'jcl'
     };
-    return langMap[ext] || '';
+    return langMap[ext.toLowerCase()] || '';
   }
 
   /**

@@ -164,32 +164,79 @@ const DEFAULT_CONFIG: Required<ASTChunkerConfig> = {
 };
 
 // Domain keyword mappings for business context inference
+// Includes modern web/cloud keywords AND mainframe/COBOL-specific terms
 const DOMAIN_KEYWORDS: Record<DomainCategory, string[]> = {
-  'authentication': ['auth', 'login', 'logout', 'signin', 'signout', 'password', 'credential', 'jwt', 'token', 'oauth', 'sso', 'saml', 'identity', 'session'],
-  'authorization': ['permission', 'role', 'policy', 'access', 'authorize', 'acl', 'rbac', 'scope', 'claim', 'grant', 'deny', 'allowed', 'forbidden'],
-  'user-management': ['user', 'account', 'profile', 'member', 'registration', 'signup', 'onboard', 'invite', 'team', 'organization'],
-  'data-access': ['repository', 'dao', 'query', 'database', 'db', 'sql', 'orm', 'entity', 'schema', 'migration', 'seed', 'connection', 'pool'],
-  'api-endpoint': ['endpoint', 'route', 'controller', 'handler', 'request', 'response', 'rest', 'graphql', 'api', 'http', 'get', 'post', 'put', 'delete', 'patch'],
-  'business-logic': ['service', 'domain', 'workflow', 'process', 'rule', 'calculation', 'business', 'logic', 'usecase', 'interactor'],
-  'validation': ['validate', 'validator', 'schema', 'constraint', 'rule', 'sanitize', 'clean', 'check', 'verify', 'assert'],
-  'error-handling': ['error', 'exception', 'catch', 'throw', 'handle', 'fault', 'failure', 'recovery', 'retry', 'fallback'],
-  'logging': ['log', 'logger', 'trace', 'debug', 'info', 'warn', 'error', 'audit', 'track', 'telemetry', 'metric', 'monitor'],
-  'caching': ['cache', 'redis', 'memcache', 'ttl', 'invalidate', 'store', 'retrieve', 'memo', 'buffer'],
-  'messaging': ['queue', 'message', 'event', 'publish', 'subscribe', 'broker', 'kafka', 'rabbitmq', 'bus', 'notification', 'emit', 'listener'],
-  'scheduling': ['schedule', 'cron', 'job', 'task', 'timer', 'interval', 'background', 'worker', 'batch', 'recurring'],
-  'file-handling': ['file', 'upload', 'download', 'stream', 'blob', 'storage', 's3', 'attachment', 'document', 'media', 'image'],
-  'payment': ['payment', 'invoice', 'billing', 'subscription', 'charge', 'refund', 'transaction', 'order', 'cart', 'checkout', 'stripe', 'price'],
+  'authentication': ['auth', 'login', 'logout', 'signin', 'signout', 'password', 'credential', 'jwt', 'token', 'oauth', 'sso', 'saml', 'identity', 'session',
+    // Mainframe: RACF, ACF2, Top Secret security
+    'racf', 'acf2', 'topsecret', 'signon', 'logon', 'userid', 'passticket'],
+  'authorization': ['permission', 'role', 'policy', 'access', 'authorize', 'acl', 'rbac', 'scope', 'claim', 'grant', 'deny', 'allowed', 'forbidden',
+    // Mainframe security
+    'permit', 'authority', 'security-level', 'access-level'],
+  'user-management': ['user', 'account', 'profile', 'member', 'registration', 'signup', 'onboard', 'invite', 'team', 'organization',
+    // COBOL business terms
+    'customer', 'client', 'cardholder', 'employee', 'personnel', 'party'],
+  'data-access': ['repository', 'dao', 'query', 'database', 'db', 'sql', 'orm', 'entity', 'schema', 'migration', 'seed', 'connection', 'pool',
+    // COBOL/Mainframe data access
+    'vsam', 'ksds', 'esds', 'rrds', 'qsam', 'bsam', 'db2', 'ims', 'dli', 'cics', 'dataset', 'file-control', 'select', 'assign',
+    'read', 'write', 'rewrite', 'delete', 'start', 'open', 'close', 'fetch', 'cursor', 'working-storage', 'linkage', 'fd', 'copybook'],
+  'api-endpoint': ['endpoint', 'route', 'controller', 'handler', 'request', 'response', 'rest', 'graphql', 'api', 'http', 'get', 'post', 'put', 'delete', 'patch',
+    // Mainframe APIs
+    'cics', 'mq', 'mqseries', 'websphere', 'commarea', 'dfhcommarea', 'eiblk', 'exec-cics', 'link', 'xctl', 'return'],
+  'business-logic': ['service', 'domain', 'workflow', 'process', 'rule', 'calculation', 'business', 'logic', 'usecase', 'interactor',
+    // COBOL business logic
+    'compute', 'calculate', 'evaluate', 'perform', 'procedure', 'paragraph', 'section', 'division', 'mainline',
+    // CardDemo specific (financial)
+    'interest', 'balance', 'credit', 'debit', 'acct', 'tran', 'statement', 'ledger'],
+  'validation': ['validate', 'validator', 'schema', 'constraint', 'rule', 'sanitize', 'clean', 'check', 'verify', 'assert',
+    // COBOL validation
+    'edit', 'numeric', 'alphabetic', 'inspect', 'string', 'unstring', 'reference'],
+  'error-handling': ['error', 'exception', 'catch', 'throw', 'handle', 'fault', 'failure', 'recovery', 'retry', 'fallback',
+    // COBOL error handling
+    'abend', 'abnormal', 'file-status', 'sqlcode', 'sqlstate', 'on-exception', 'not-on-exception', 'invalid-key', 'at-end'],
+  'logging': ['log', 'logger', 'trace', 'debug', 'info', 'warn', 'error', 'audit', 'track', 'telemetry', 'metric', 'monitor',
+    // Mainframe logging
+    'sysout', 'sysprint', 'display', 'smf', 'wto', 'wtl', 'journal'],
+  'caching': ['cache', 'redis', 'memcache', 'ttl', 'invalidate', 'store', 'retrieve', 'memo', 'buffer',
+    // CICS caching
+    'ts-queue', 'td-queue', 'temp-storage', 'transient-data'],
+  'messaging': ['queue', 'message', 'event', 'publish', 'subscribe', 'broker', 'kafka', 'rabbitmq', 'bus', 'notification', 'emit', 'listener',
+    // Mainframe messaging
+    'mq', 'mqget', 'mqput', 'mqopen', 'mqclose', 'cics-td', 'cics-ts'],
+  'scheduling': ['schedule', 'cron', 'job', 'task', 'timer', 'interval', 'background', 'worker', 'batch', 'recurring',
+    // Mainframe batch/scheduling
+    'jcl', 'job', 'step', 'exec', 'proc', 'dd', 'disp', 'dsn', 'joblib', 'steplib', 'sysin'],
+  'file-handling': ['file', 'upload', 'download', 'stream', 'blob', 'storage', 's3', 'attachment', 'document', 'media', 'image',
+    // COBOL file handling
+    'sequential', 'indexed', 'relative', 'line-sequential', 'record', 'block', 'recfm', 'lrecl', 'blksize'],
+  'payment': ['payment', 'invoice', 'billing', 'subscription', 'charge', 'refund', 'transaction', 'order', 'cart', 'checkout', 'stripe', 'price',
+    // Financial/CardDemo terms
+    'card', 'credit-card', 'debit-card', 'merchant', 'acquirer', 'issuer', 'interchange', 'settlement', 'authorization',
+    'cvv', 'expiry', 'pan', 'account-number', 'routing', 'ach', 'wire', 'transfer', 'amount', 'currency', 'fee', 'interest-rate'],
   'notification': ['notify', 'notification', 'alert', 'email', 'sms', 'push', 'send', 'template', 'mail'],
-  'search': ['search', 'query', 'filter', 'sort', 'index', 'elastic', 'fulltext', 'find', 'lookup', 'autocomplete'],
-  'analytics': ['analytics', 'report', 'metric', 'dashboard', 'chart', 'aggregate', 'statistics', 'insight', 'tracking'],
-  'configuration': ['config', 'setting', 'option', 'preference', 'environment', 'env', 'constant', 'feature', 'flag', 'toggle'],
+  'search': ['search', 'query', 'filter', 'sort', 'index', 'elastic', 'fulltext', 'find', 'lookup', 'autocomplete',
+    // COBOL search
+    'search-all', 'search-when', 'binary-search'],
+  'analytics': ['analytics', 'report', 'metric', 'dashboard', 'chart', 'aggregate', 'statistics', 'insight', 'tracking',
+    // COBOL reporting
+    'report-writer', 'control-break', 'summary', 'total', 'subtotal', 'grand-total'],
+  'configuration': ['config', 'setting', 'option', 'preference', 'environment', 'env', 'constant', 'feature', 'flag', 'toggle',
+    // COBOL configuration
+    'parm', 'sysparm', 'symbolic', 'override', 'include', 'copy'],
   'testing': ['test', 'spec', 'mock', 'stub', 'fixture', 'assert', 'expect', 'describe', 'it', 'beforeEach', 'afterEach'],
-  'infrastructure': ['deploy', 'build', 'ci', 'docker', 'kubernetes', 'terraform', 'aws', 'azure', 'gcp', 'infra', 'devops'],
-  'ui-component': ['component', 'render', 'view', 'page', 'layout', 'widget', 'modal', 'form', 'button', 'input', 'table', 'list'],
+  'infrastructure': ['deploy', 'build', 'ci', 'docker', 'kubernetes', 'terraform', 'aws', 'azure', 'gcp', 'infra', 'devops',
+    // Mainframe infrastructure
+    'lpar', 'sysplex', 'coupling-facility', 'gdg', 'sms', 'catalog', 'vtoc'],
+  'ui-component': ['component', 'render', 'view', 'page', 'layout', 'widget', 'modal', 'form', 'button', 'input', 'table', 'list',
+    // CICS BMS maps
+    'bms', 'map', 'mapset', 'screen', 'field', 'attribute', 'cursor', 'dfhmsd', 'dfhmdi', 'dfhmdf'],
   'state-management': ['state', 'store', 'reducer', 'action', 'dispatch', 'selector', 'context', 'provider', 'atom', 'signal'],
-  'routing': ['route', 'router', 'navigate', 'redirect', 'path', 'url', 'link', 'history', 'breadcrumb'],
+  'routing': ['route', 'router', 'navigate', 'redirect', 'path', 'url', 'link', 'history', 'breadcrumb',
+    // CICS routing
+    'tranid', 'transaction', 'program', 'xctl', 'link', 'return'],
   'middleware': ['middleware', 'interceptor', 'filter', 'guard', 'pipe', 'transform', 'before', 'after', 'around'],
-  'utility': ['util', 'helper', 'common', 'shared', 'lib', 'tool', 'format', 'parse', 'convert', 'transform'],
+  'utility': ['util', 'helper', 'common', 'shared', 'lib', 'tool', 'format', 'parse', 'convert', 'transform',
+    // COBOL utilities
+    'date-convert', 'string-util', 'numeric-edit', 'intrinsic', 'function'],
   'unknown': []
 };
 
@@ -228,6 +275,12 @@ export class ASTChunker {
       case 'java':
       case 'kotlin':
         return this.chunkJavaLike(filePath, content, language);
+      case 'cobol':
+        return this.chunkCOBOL(filePath, content);
+      case 'jcl':
+        return this.chunkJCL(filePath, content);
+      case 'sql':
+        return this.chunkSQL(filePath, content);
       default:
         // Fallback to pattern-based chunking for other languages
         return this.chunkGeneric(filePath, content, language);
@@ -1184,6 +1237,414 @@ export class ASTChunker {
   }
 
   /**
+   * COBOL-aware chunking
+   * COBOL has a unique structure with DIVISIONs, SECTIONs, and PARAGRAPHs
+   * Also handles copybooks (.cpy files)
+   */
+  private chunkCOBOL(filePath: string, content: string): ASTChunk[] {
+    const chunks: ASTChunk[] = [];
+    const lines = content.split('\n');
+    const isCopybook = filePath.toLowerCase().endsWith('.cpy') || filePath.toLowerCase().endsWith('.copy');
+
+    // COBOL structure patterns
+    // Divisions are major sections (IDENTIFICATION, ENVIRONMENT, DATA, PROCEDURE)
+    const divisionPattern = /^\s{0,6}\s*(\w+)\s+DIVISION\s*\.?/i;
+    // Sections within divisions
+    const sectionPattern = /^\s{0,6}\s*(\w[\w-]*)\s+SECTION\s*\.?/i;
+    // Paragraphs (entry points, procedures)
+    const paragraphPattern = /^\s{0,6}\s*(\w[\w-]*)\s*\.\s*$/;
+    // COPY statements
+    const copyPattern = /^\s{0,6}\s*COPY\s+["']?(\w[\w-]*)["']?\s*\.?/i;
+    // Program-ID
+    const programIdPattern = /^\s{0,6}\s*PROGRAM-ID\s*\.\s*(\w[\w-]*)/i;
+    // File definitions
+    const fdPattern = /^\s{0,6}\s*FD\s+(\w[\w-]*)/i;
+    const sdPattern = /^\s{0,6}\s*SD\s+(\w[\w-]*)/i;
+    // Working storage data items (01 level)
+    const dataItemPattern = /^\s{0,6}\s*01\s+(\w[\w-]*)/i;
+    // EXEC SQL / EXEC CICS blocks
+    const execPattern = /^\s{0,6}\s*EXEC\s+(SQL|CICS)/i;
+
+    let currentChunk: { start: number; name: string; type: ChunkType; division?: string } | null = null;
+    let programName = path.basename(filePath, path.extname(filePath));
+    let currentDivision = '';
+    const copybooks: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Track COPY statements for imports
+      const copyMatch = line.match(copyPattern);
+      if (copyMatch) {
+        copybooks.push(copyMatch[1]);
+      }
+
+      // Extract program name
+      const programMatch = line.match(programIdPattern);
+      if (programMatch) {
+        programName = programMatch[1];
+      }
+
+      // Check for division
+      const divisionMatch = line.match(divisionPattern);
+      if (divisionMatch) {
+        if (currentChunk) {
+          chunks.push(this.finalizeCOBOLChunk(currentChunk, i, lines, filePath, currentDivision));
+        }
+        currentDivision = divisionMatch[1].toUpperCase();
+        currentChunk = {
+          start: i,
+          name: `${currentDivision} DIVISION`,
+          type: 'module',
+          division: currentDivision
+        };
+        continue;
+      }
+
+      // Check for section
+      const sectionMatch = line.match(sectionPattern);
+      if (sectionMatch && currentDivision) {
+        if (currentChunk && currentChunk.type !== 'module') {
+          chunks.push(this.finalizeCOBOLChunk(currentChunk, i, lines, filePath, currentDivision));
+        }
+        currentChunk = {
+          start: i,
+          name: sectionMatch[1],
+          type: currentDivision === 'PROCEDURE' ? 'function' : 'module',
+          division: currentDivision
+        };
+        continue;
+      }
+
+      // Check for FD (File Description)
+      const fdMatch = line.match(fdPattern) || line.match(sdPattern);
+      if (fdMatch && currentDivision === 'DATA') {
+        if (currentChunk) {
+          chunks.push(this.finalizeCOBOLChunk(currentChunk, i, lines, filePath, currentDivision));
+        }
+        currentChunk = {
+          start: i,
+          name: fdMatch[1],
+          type: 'model',  // File definitions are like data models
+          division: currentDivision
+        };
+        continue;
+      }
+
+      // Check for 01-level data items in working storage
+      const dataMatch = line.match(dataItemPattern);
+      if (dataMatch && currentDivision === 'DATA') {
+        if (currentChunk && currentChunk.type === 'model') {
+          chunks.push(this.finalizeCOBOLChunk(currentChunk, i, lines, filePath, currentDivision));
+        }
+        if (!currentChunk || currentChunk.type !== 'module') {
+          currentChunk = {
+            start: i,
+            name: dataMatch[1],
+            type: 'model',
+            division: currentDivision
+          };
+        }
+        continue;
+      }
+
+      // Check for paragraphs in PROCEDURE DIVISION
+      const paragraphMatch = line.match(paragraphPattern);
+      if (paragraphMatch && currentDivision === 'PROCEDURE') {
+        const paragraphName = paragraphMatch[1];
+        // Skip if it looks like a data name or is too short
+        if (paragraphName.length > 2 && !paragraphName.match(/^[0-9]/)) {
+          if (currentChunk && currentChunk.type !== 'module') {
+            chunks.push(this.finalizeCOBOLChunk(currentChunk, i, lines, filePath, currentDivision));
+          }
+          currentChunk = {
+            start: i,
+            name: paragraphName,
+            type: this.inferCOBOLParagraphType(paragraphName),
+            division: currentDivision
+          };
+        }
+      }
+    }
+
+    // Finalize last chunk
+    if (currentChunk) {
+      chunks.push(this.finalizeCOBOLChunk(currentChunk, lines.length, lines, filePath, currentDivision));
+    }
+
+    // For copybooks or small files, return whole file chunk
+    if (chunks.length === 0 || isCopybook) {
+      const wholeFile = this.createWholeFileChunk(filePath, content, 'cobol', copybooks);
+      wholeFile.chunkType = isCopybook ? 'import-block' : 'file';
+      wholeFile.name = programName;
+      return [wholeFile];
+    }
+
+    // Add copybook references to first chunk
+    if (chunks.length > 0 && copybooks.length > 0) {
+      chunks[0].imports = copybooks;
+    }
+
+    return this.mergeSmallChunks(chunks, filePath, 'cobol');
+  }
+
+  /**
+   * Finalize a COBOL chunk
+   */
+  private finalizeCOBOLChunk(
+    chunk: { start: number; name: string; type: ChunkType; division?: string },
+    endLine: number,
+    lines: string[],
+    filePath: string,
+    division: string
+  ): ASTChunk {
+    const content = lines.slice(chunk.start, endLine).join('\n');
+    const contextPath = division ? `${division} DIVISION > ${chunk.name}` : chunk.name;
+
+    return {
+      id: `${filePath}:${chunk.start + 1}-${endLine}`,
+      filePath,
+      startLine: chunk.start + 1,
+      endLine,
+      content,
+      language: 'cobol',
+      chunkType: chunk.type,
+      name: chunk.name,
+      contextPath,
+      domainHints: this.inferDomainHints(chunk.name, undefined, [], content)
+    };
+  }
+
+  /**
+   * Infer COBOL paragraph type from naming conventions
+   */
+  private inferCOBOLParagraphType(name: string): ChunkType {
+    const nameLower = name.toLowerCase();
+
+    // Common COBOL naming patterns
+    if (nameLower.includes('init') || nameLower.includes('start') || nameLower.includes('begin')) {
+      return 'constructor';  // Initialization logic
+    }
+    if (nameLower.includes('read') || nameLower.includes('fetch') || nameLower.includes('get')) {
+      return 'repository';  // Data retrieval
+    }
+    if (nameLower.includes('write') || nameLower.includes('update') || nameLower.includes('insert') || nameLower.includes('delete')) {
+      return 'repository';  // Data modification
+    }
+    if (nameLower.includes('valid') || nameLower.includes('check') || nameLower.includes('edit')) {
+      return 'function';  // Validation
+    }
+    if (nameLower.includes('calc') || nameLower.includes('compute') || nameLower.includes('process')) {
+      return 'function';  // Business logic
+    }
+    if (nameLower.includes('display') || nameLower.includes('print') || nameLower.includes('report')) {
+      return 'function';  // Output/reporting
+    }
+    if (nameLower.includes('error') || nameLower.includes('abort') || nameLower.includes('exception')) {
+      return 'function';  // Error handling
+    }
+    if (nameLower.includes('term') || nameLower.includes('end') || nameLower.includes('close') || nameLower.includes('final')) {
+      return 'function';  // Cleanup/termination
+    }
+    if (nameLower.includes('main') || nameLower === 'mainline' || nameLower === 'main-logic') {
+      return 'handler';  // Main entry point
+    }
+
+    return 'function';
+  }
+
+  /**
+   * JCL (Job Control Language) chunking
+   * JCL defines batch job steps, procedures, and dataset allocations
+   */
+  private chunkJCL(filePath: string, content: string): ASTChunk[] {
+    const chunks: ASTChunk[] = [];
+    const lines = content.split('\n');
+
+    // JCL patterns
+    const jobPattern = /^\/\/(\w+)\s+JOB\s/;
+    const execPattern = /^\/\/(\w*)\s+EXEC\s+(?:PGM=|PROC=)?(\w+)/;
+    const procPattern = /^\/\/(\w+)\s+PROC\s/;
+    const ddPattern = /^\/\/(\w+)\s+DD\s/;
+
+    let currentChunk: { start: number; name: string; type: ChunkType } | null = null;
+    let jobName = path.basename(filePath, path.extname(filePath));
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Job statement
+      const jobMatch = line.match(jobPattern);
+      if (jobMatch) {
+        if (currentChunk) {
+          chunks.push(this.finalizeJCLChunk(currentChunk, i, lines, filePath));
+        }
+        jobName = jobMatch[1];
+        currentChunk = { start: i, name: jobName, type: 'handler' };
+        continue;
+      }
+
+      // Proc definition
+      const procMatch = line.match(procPattern);
+      if (procMatch) {
+        if (currentChunk) {
+          chunks.push(this.finalizeJCLChunk(currentChunk, i, lines, filePath));
+        }
+        currentChunk = { start: i, name: procMatch[1], type: 'function' };
+        continue;
+      }
+
+      // Exec step
+      const execMatch = line.match(execPattern);
+      if (execMatch) {
+        if (currentChunk && currentChunk.type !== 'handler') {
+          chunks.push(this.finalizeJCLChunk(currentChunk, i, lines, filePath));
+        }
+        const stepName = execMatch[1] || execMatch[2];
+        if (!currentChunk || currentChunk.type !== 'handler') {
+          currentChunk = { start: i, name: stepName, type: 'function' };
+        }
+      }
+    }
+
+    // Finalize last chunk
+    if (currentChunk) {
+      chunks.push(this.finalizeJCLChunk(currentChunk, lines.length, lines, filePath));
+    }
+
+    return chunks.length > 0 ? chunks : [this.createWholeFileChunk(filePath, content, 'jcl')];
+  }
+
+  private finalizeJCLChunk(
+    chunk: { start: number; name: string; type: ChunkType },
+    endLine: number,
+    lines: string[],
+    filePath: string
+  ): ASTChunk {
+    const content = lines.slice(chunk.start, endLine).join('\n');
+    return {
+      id: `${filePath}:${chunk.start + 1}-${endLine}`,
+      filePath,
+      startLine: chunk.start + 1,
+      endLine,
+      content,
+      language: 'jcl',
+      chunkType: chunk.type,
+      name: chunk.name,
+      domainHints: this.inferDomainHints(chunk.name, undefined, [], content)
+    };
+  }
+
+  /**
+   * SQL chunking - handles stored procedures, views, tables, etc.
+   */
+  private chunkSQL(filePath: string, content: string): ASTChunk[] {
+    const chunks: ASTChunk[] = [];
+    const lines = content.split('\n');
+
+    // SQL patterns (case insensitive)
+    const createProcPattern = /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:PROCEDURE|PROC)\s+(\w+)/i;
+    const createFuncPattern = /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(\w+)/i;
+    const createTablePattern = /^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i;
+    const createViewPattern = /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(\w+)/i;
+    const createTriggerPattern = /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+(\w+)/i;
+    const createIndexPattern = /^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+(\w+)/i;
+
+    let currentChunk: { start: number; name: string; type: ChunkType } | null = null;
+    let inBlock = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmedLine = line.trim();
+
+      // Check for CREATE statements
+      let match = line.match(createProcPattern);
+      if (match) {
+        if (currentChunk) {
+          chunks.push(this.finalizeSQLChunk(currentChunk, i, lines, filePath));
+        }
+        currentChunk = { start: i, name: match[1], type: 'function' };
+        inBlock = true;
+        continue;
+      }
+
+      match = line.match(createFuncPattern);
+      if (match) {
+        if (currentChunk) {
+          chunks.push(this.finalizeSQLChunk(currentChunk, i, lines, filePath));
+        }
+        currentChunk = { start: i, name: match[1], type: 'function' };
+        inBlock = true;
+        continue;
+      }
+
+      match = line.match(createTablePattern);
+      if (match) {
+        if (currentChunk) {
+          chunks.push(this.finalizeSQLChunk(currentChunk, i, lines, filePath));
+        }
+        currentChunk = { start: i, name: match[1], type: 'model' };
+        continue;
+      }
+
+      match = line.match(createViewPattern);
+      if (match) {
+        if (currentChunk) {
+          chunks.push(this.finalizeSQLChunk(currentChunk, i, lines, filePath));
+        }
+        currentChunk = { start: i, name: match[1], type: 'model' };
+        continue;
+      }
+
+      match = line.match(createTriggerPattern);
+      if (match) {
+        if (currentChunk) {
+          chunks.push(this.finalizeSQLChunk(currentChunk, i, lines, filePath));
+        }
+        currentChunk = { start: i, name: match[1], type: 'handler' };
+        inBlock = true;
+        continue;
+      }
+
+      // End of block (GO, ;, or END)
+      if (inBlock && (trimmedLine === 'GO' || trimmedLine === 'END' || trimmedLine === 'END;')) {
+        if (currentChunk) {
+          chunks.push(this.finalizeSQLChunk(currentChunk, i + 1, lines, filePath));
+          currentChunk = null;
+        }
+        inBlock = false;
+      }
+    }
+
+    // Finalize last chunk
+    if (currentChunk) {
+      chunks.push(this.finalizeSQLChunk(currentChunk, lines.length, lines, filePath));
+    }
+
+    return chunks.length > 0 ? chunks : [this.createWholeFileChunk(filePath, content, 'sql')];
+  }
+
+  private finalizeSQLChunk(
+    chunk: { start: number; name: string; type: ChunkType },
+    endLine: number,
+    lines: string[],
+    filePath: string
+  ): ASTChunk {
+    const content = lines.slice(chunk.start, endLine).join('\n');
+    return {
+      id: `${filePath}:${chunk.start + 1}-${endLine}`,
+      filePath,
+      startLine: chunk.start + 1,
+      endLine,
+      content,
+      language: 'sql',
+      chunkType: chunk.type,
+      name: chunk.name,
+      domainHints: this.inferDomainHints(chunk.name, undefined, [], content)
+    };
+  }
+
+  /**
    * Get language from file extension
    */
   private getLanguage(ext: string): string {
@@ -1211,6 +1672,21 @@ export class ASTChunker {
       '.swift': 'swift',
       '.vue': 'vue',
       '.svelte': 'svelte',
+      // Mainframe / COBOL
+      '.cbl': 'cobol',
+      '.cob': 'cobol',
+      '.cobol': 'cobol',
+      '.cpy': 'cobol',
+      '.copy': 'cobol',
+      '.jcl': 'jcl',
+      '.pli': 'pli',
+      '.pl1': 'pli',
+      '.asm': 'asm',
+      '.s': 'asm',
+      '.sql': 'sql',
+      '.bms': 'bms',
+      '.prc': 'jcl',
+      '.proc': 'jcl',
     };
     return langMap[ext] || 'unknown';
   }
