@@ -1580,62 +1580,92 @@ tr:hover {
 }
 
 /* ========================================
-   AI Chat Panel
+   AI Chat Side Panel (VS Code style)
    ======================================== */
-.chat-trigger {
-  position: relative;
+
+/* Site container shrinks when chat is open */
+.site-container {
+  transition: margin-right var(--transition-normal);
 }
 
-.chat-trigger::after {
-  content: '';
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 8px;
-  height: 8px;
-  background: var(--color-primary);
-  border-radius: 50%;
-  opacity: 0;
-  transition: opacity var(--transition-fast);
+body.chat-open .site-container {
+  margin-right: 380px;
 }
 
-.chat-trigger.has-notification::after {
-  opacity: 1;
+/* Chat toggle button - always visible */
+.chat-toggle-btn {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 201;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 72px;
+  padding: 0;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-right: none;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition-fast);
 }
 
+.chat-toggle-btn:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  width: 42px;
+}
+
+.chat-toggle-icon-close {
+  display: none;
+}
+
+body.chat-open .chat-toggle-btn {
+  right: 380px;
+}
+
+body.chat-open .chat-toggle-icon-open {
+  display: none;
+}
+
+body.chat-open .chat-toggle-icon-close {
+  display: block;
+}
+
+/* Chat panel - right side panel */
 .chat-panel {
   position: fixed;
-  bottom: var(--spacing-lg);
-  right: var(--spacing-lg);
-  width: 400px;
-  max-width: calc(100vw - var(--spacing-lg) * 2);
-  max-height: calc(100vh - var(--header-height) - var(--spacing-lg) * 2);
+  top: var(--header-height);
+  right: 0;
+  bottom: 0;
+  width: 380px;
   display: flex;
   flex-direction: column;
   background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xl);
+  border-left: 1px solid var(--color-border);
   z-index: 200;
-  transform: translateY(20px);
-  opacity: 0;
-  visibility: hidden;
-  transition: all var(--transition-normal);
+  transform: translateX(100%);
+  transition: transform var(--transition-normal);
 }
 
-.chat-panel.open {
-  transform: translateY(0);
-  opacity: 1;
-  visibility: visible;
+body.chat-open .chat-panel {
+  transform: translateX(0);
 }
 
 .chat-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-md) var(--spacing-lg);
+  padding: var(--spacing-sm) var(--spacing-md);
   border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
   flex-shrink: 0;
+  min-height: 44px;
 }
 
 .chat-panel-title {
@@ -1643,6 +1673,33 @@ tr:hover {
   align-items: center;
   gap: var(--spacing-sm);
   font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.chat-panel-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.chat-panel-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.chat-panel-collapse:hover {
+  background: var(--color-bg-tertiary);
   color: var(--color-text);
 }
 
@@ -1854,22 +1911,19 @@ tr:hover {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-md);
-  min-height: 200px;
-  max-height: 400px;
 }
 
 .chat-welcome {
-  text-align: center;
-  padding: var(--spacing-lg);
+  padding: var(--spacing-md);
 }
 
 .chat-welcome-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
-  margin-bottom: var(--spacing-md);
+  width: 48px;
+  height: 48px;
+  margin-bottom: var(--spacing-sm);
   background: linear-gradient(135deg, #e5e5e5, #f5f5f5);
   border-radius: 50%;
   color: #404040;
@@ -1877,55 +1931,33 @@ tr:hover {
 
 .chat-welcome h4 {
   margin: 0 0 var(--spacing-xs);
-  font-size: var(--text-lg);
+  font-size: var(--text-base);
   color: var(--color-text);
 }
 
-.chat-welcome p {
+.chat-welcome-desc {
   margin: 0 0 var(--spacing-md);
   color: var(--color-text-secondary);
-  font-size: var(--text-sm);
-}
-
-.chat-capabilities {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs);
-  margin-bottom: var(--spacing-lg);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-bg-secondary);
-  border-radius: var(--radius-md);
-}
-
-.capability {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
   font-size: var(--text-xs);
-  color: var(--color-text-secondary);
-}
-
-.capability svg {
-  color: var(--color-success);
-  flex-shrink: 0;
+  line-height: 1.5;
 }
 
 .chat-suggestions {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: var(--spacing-xs);
 }
 
 .chat-suggestion {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md);
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   text-align: left;
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -1933,19 +1965,17 @@ tr:hover {
 
 .chat-suggestion svg {
   flex-shrink: 0;
-  opacity: 0.6;
-  transition: opacity var(--transition-fast);
+  opacity: 0.5;
 }
 
 .chat-suggestion:hover {
   background: var(--color-bg-tertiary);
-  border-color: var(--color-primary);
+  border-color: var(--color-text-muted);
   color: var(--color-text);
 }
 
 .chat-suggestion:hover svg {
   opacity: 1;
-  color: var(--color-primary);
 }
 
 .chat-message {
@@ -2294,25 +2324,88 @@ tr:hover {
   font-size: var(--text-sm);
 }
 
+/* Distinct link styling in chat responses */
+.chat-message-content a:not(.source-link) {
+  color: var(--color-primary);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  padding-bottom: 1px;
+  transition: all var(--transition-fast);
+}
+
+.chat-message-content a:not(.source-link):hover {
+  color: var(--color-primary-hover);
+  border-bottom-width: 2px;
+}
+
+.chat-message-content a:not(.source-link)::after {
+  content: ' →';
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+/* SPA navigation loading state */
+.chat-message-content a.loading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
 /* Mobile chat panel */
 @media (max-width: 768px) {
   .chat-panel {
+    top: auto;
     bottom: 0;
-    right: 0;
     left: 0;
     width: 100%;
-    max-width: 100%;
-    max-height: 70vh;
+    height: 70vh;
+    border-left: none;
+    border-top: 1px solid var(--color-border);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    transform: translateY(100%);
   }
 
-  .chat-panel.open {
+  body.chat-open .chat-panel {
     transform: translateY(0);
   }
 
-  .chat-messages {
-    max-height: none;
-    flex: 1;
+  body.chat-open .site-container {
+    margin-right: 0;
+  }
+
+  .chat-toggle-btn {
+    right: var(--spacing-md);
+    bottom: var(--spacing-md);
+    top: auto;
+    transform: none;
+    width: 48px;
+    height: 48px;
+    border: 1px solid var(--color-border);
+    border-radius: 50%;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .chat-toggle-btn:hover {
+    width: 48px;
+  }
+
+  body.chat-open .chat-toggle-btn {
+    right: var(--spacing-md);
+    bottom: calc(70vh + var(--spacing-md));
+  }
+
+  .chat-suggestions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Smaller screens */
+@media (max-width: 480px) {
+  .chat-panel {
+    height: 80vh;
+  }
+
+  body.chat-open .chat-toggle-btn {
+    bottom: calc(80vh + var(--spacing-md));
   }
 }
 `;

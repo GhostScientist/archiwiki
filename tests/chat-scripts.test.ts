@@ -111,9 +111,9 @@ describe('Chat Client Scripts', () => {
   describe('Event Handling', () => {
     const scripts = getClientScripts({ aiChat: true });
 
-    it('should handle panel open/close', () => {
-      expect(scripts).toContain("trigger.addEventListener('click'");
-      expect(scripts).toContain("closeBtn?.addEventListener('click'");
+    it('should handle panel toggle', () => {
+      expect(scripts).toContain("toggleBtn.addEventListener('click'");
+      expect(scripts).toContain("collapseBtn?.addEventListener('click'");
     });
 
     it('should handle input events', () => {
@@ -139,12 +139,12 @@ describe('Chat Client Scripts', () => {
   describe('UI State Management', () => {
     const scripts = getClientScripts({ aiChat: true });
 
-    it('should toggle panel open class', () => {
-      expect(scripts).toContain("classList.toggle('open')");
+    it('should toggle chat-open class on body', () => {
+      expect(scripts).toContain("document.body.classList.toggle('chat-open')");
     });
 
-    it('should remove panel open class on close', () => {
-      expect(scripts).toContain("classList.remove('open')");
+    it('should remove chat-open class on close', () => {
+      expect(scripts).toContain("classList.remove('chat-open')");
     });
 
     it('should manage send button disabled state', () => {

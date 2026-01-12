@@ -912,8 +912,8 @@ export class SiteGenerator {
       }> = [];
 
       for (const page of this.pages) {
-        // Split content into smaller chunks (about 500 chars each for better retrieval)
-        const pageChunks = this.chunkContent(page.content, 500, 100);
+        // Split content into semantic chunks (800 chars for more context while staying focused)
+        const pageChunks = this.chunkContent(page.content, 800, 0);
         const htmlPath = page.relativePath.replace(/\.md$/, '.html');
 
         for (const chunkContent of pageChunks) {
@@ -957,31 +957,67 @@ export class SiteGenerator {
   }
 
   /**
-   * Chunk content into smaller pieces for embedding
+   * Chunk content into semantic pieces for better embedding retrieval
+   * Uses paragraph and section boundaries instead of arbitrary character counts
    */
   private chunkContent(content: string, chunkSize: number, overlap: number): string[] {
-    // Strip markdown formatting first
-    const stripped = this.stripMarkdown(content);
     const chunks: string[] = [];
 
-    let start = 0;
-    while (start < stripped.length) {
-      let end = start + chunkSize;
+    // Split by headers first to preserve section context
+    const sections = content.split(/(?=^#{1,3}\s)/m);
 
-      // Try to end at sentence boundary
-      if (end < stripped.length) {
-        const sentenceEnd = stripped.slice(start, end + 100).lastIndexOf('. ');
-        if (sentenceEnd > chunkSize / 2) {
-          end = start + sentenceEnd + 1;
+    for (const section of sections) {
+      if (!section.trim()) continue;
+
+      // Extract section header if present
+      const headerMatch = section.match(/^(#{1,3}\s+.+?)(?:\n|$)/);
+      const header = headerMatch ? headerMatch[1].replace(/^#+\s*/, '').trim() : '';
+      const sectionContent = headerMatch ? section.slice(headerMatch[0].length) : section;
+
+      // Split section into paragraphs
+      const paragraphs = sectionContent.split(/\n\n+/).filter(p => p.trim().length > 30);
+
+      let currentChunk = header ? `[${header}] ` : '';
+      let currentLength = currentChunk.length;
+
+      for (const para of paragraphs) {
+        const strippedPara = this.stripMarkdown(para).trim();
+
+        // If adding this paragraph would exceed chunk size, save current and start new
+        if (currentLength + strippedPara.length > chunkSize && currentChunk.length > 50) {
+          chunks.push(currentChunk.trim());
+          // Start new chunk with section context
+          currentChunk = header ? `[${header}] ` : '';
+          currentLength = currentChunk.length;
         }
+
+        currentChunk += strippedPara + ' ';
+        currentLength += strippedPara.length + 1;
       }
 
-      const chunk = stripped.slice(start, end).trim();
-      if (chunk.length > 50) { // Skip very small chunks
-        chunks.push(chunk);
+      // Don't forget the last chunk
+      if (currentChunk.trim().length > 50) {
+        chunks.push(currentChunk.trim());
+      }
+    }
+
+    // If content had no clear sections, fall back to sentence-based chunking
+    if (chunks.length === 0) {
+      const stripped = this.stripMarkdown(content);
+      const sentences = stripped.split(/(?<=[.!?])\s+/);
+      let currentChunk = '';
+
+      for (const sentence of sentences) {
+        if (currentChunk.length + sentence.length > chunkSize && currentChunk.length > 50) {
+          chunks.push(currentChunk.trim());
+          currentChunk = '';
+        }
+        currentChunk += sentence + ' ';
       }
 
-      start = end - overlap;
+      if (currentChunk.trim().length > 50) {
+        chunks.push(currentChunk.trim());
+      }
     }
 
     return chunks;

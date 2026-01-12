@@ -109,15 +109,6 @@ export function getTemplates() {
         </button>
         ` : ''}
 
-        ${data.features.aiChat ? `
-        <button class="chat-trigger" title="Ask AI about this documentation">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-            <path d="M12 7v2"></path>
-            <path d="M12 13h.01"></path>
-          </svg>
-        </button>
-        ` : ''}
 
         <button class="theme-toggle" title="Toggle theme">
           <svg class="sun-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -147,40 +138,42 @@ export function getTemplates() {
     </div>
   </header>
 
-  <!-- Main Layout -->
-  <div class="site-layout">
-    <!-- Sidebar Navigation -->
-    <aside class="sidebar" aria-label="Main navigation">
-      <nav class="sidebar-nav">
-        ${data.navigation.sections.map(section => `
-          <div class="nav-section">
-            <h3 class="nav-section-title">${escapeHtml(section.title)}</h3>
-            <ul class="nav-list">
-              ${section.pages.map(page => `
-                <li class="nav-item${page.path === data.currentPath ? ' active' : ''}">
-                  <a href="${data.rootPath}${page.path}" class="nav-link" ${page.description ? `title="${escapeAttr(page.description)}"` : ''}>
-                    ${escapeHtml(page.title)}
-                    ${data.features.progressTracking ? '<span class="read-indicator" aria-hidden="true"></span>' : ''}
-                  </a>
-                </li>
-              `).join('')}
-            </ul>
+  <!-- Main Layout Container - adjusts when chat panel is open -->
+  <div class="site-container">
+    <!-- Main Layout -->
+    <div class="site-layout">
+      <!-- Sidebar Navigation -->
+      <aside class="sidebar" aria-label="Main navigation">
+        <nav class="sidebar-nav">
+          ${data.navigation.sections.map(section => `
+            <div class="nav-section">
+              <h3 class="nav-section-title">${escapeHtml(section.title)}</h3>
+              <ul class="nav-list">
+                ${section.pages.map(page => `
+                  <li class="nav-item${page.path === data.currentPath ? ' active' : ''}">
+                    <a href="${data.rootPath}${page.path}" class="nav-link" ${page.description ? `title="${escapeAttr(page.description)}"` : ''}>
+                      ${escapeHtml(page.title)}
+                      ${data.features.progressTracking ? '<span class="read-indicator" aria-hidden="true"></span>' : ''}
+                    </a>
+                  </li>
+                `).join('')}
+              </ul>
+            </div>
+          `).join('')}
+        </nav>
+
+        ${data.features.progressTracking ? `
+        <div class="progress-indicator">
+          <div class="progress-bar">
+            <div class="progress-fill"></div>
           </div>
-        `).join('')}
-      </nav>
-
-      ${data.features.progressTracking ? `
-      <div class="progress-indicator">
-        <div class="progress-bar">
-          <div class="progress-fill"></div>
+          <span class="progress-text">0% complete</span>
         </div>
-        <span class="progress-text">0% complete</span>
-      </div>
-      ` : ''}
-    </aside>
+        ` : ''}
+      </aside>
 
-    <!-- Main Content -->
-    <main id="main-content" class="main-content">
+      <!-- Main Content -->
+      <main id="main-content" class="main-content">
       ${data.breadcrumbs}
 
       <article class="page-content">
@@ -206,12 +199,13 @@ export function getTemplates() {
       </footer>
     </main>
 
-    <!-- Table of Contents (if available) -->
-    ${data.toc ? `
-    <aside class="toc-sidebar" aria-label="Table of contents">
-      ${data.toc}
-    </aside>
-    ` : ''}
+      <!-- Table of Contents (if available) -->
+      ${data.toc ? `
+      <aside class="toc-sidebar" aria-label="Table of contents">
+        ${data.toc}
+      </aside>
+      ` : ''}
+    </div>
   </div>
 
   <!-- Search Modal -->
@@ -344,15 +338,17 @@ export function getTemplates() {
   </div>
   ` : ''}
 
-  <!-- AI Chat Panel -->
+  <!-- AI Chat Side Panel -->
   ${data.features.aiChat ? `
-  <div class="chat-panel" role="dialog" aria-modal="true" aria-label="AI Chat Assistant">
+  <aside class="chat-panel" role="complementary" aria-label="AI Chat Assistant">
     <div class="chat-panel-header">
       <div class="chat-panel-title">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
         </svg>
-        <span>Ask AI</span>
+        <span>AI Assistant</span>
+      </div>
+      <div class="chat-panel-controls">
         <div class="chat-mode-selector">
           <select class="chat-mode-dropdown" title="Chat mode">
             <option value="auto">Auto</option>
@@ -361,13 +357,12 @@ export function getTemplates() {
           </select>
         </div>
         <span class="chat-model-badge">SmolLM2</span>
+        <button class="chat-panel-collapse" aria-label="Collapse chat panel" title="Collapse panel">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
       </div>
-      <button class="chat-panel-close" aria-label="Close chat">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
     </div>
     <div class="chat-panel-status">
       <div class="chat-loading-indicator">
@@ -381,47 +376,52 @@ export function getTemplates() {
     <div class="chat-messages">
       <div class="chat-welcome">
         <div class="chat-welcome-icon">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"></path>
           </svg>
         </div>
-        <h4>Ask about this documentation</h4>
-        <p>I'll search through the wiki and provide answers with links to relevant pages. Powered by SmolLM2 running locally in your browser.</p>
-        <div class="chat-capabilities">
-          <span class="capability"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> Answer architecture questions</span>
-          <span class="capability"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> Generate visual flow diagrams</span>
-          <span class="capability"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> Link to source pages</span>
-        </div>
+        <h4>Ask about these docs</h4>
+        <p class="chat-welcome-desc">Get answers with links to relevant pages. Uses SmolLM2 locally in your browser.</p>
         <div class="chat-suggestions">
           <button class="chat-suggestion" data-question="What is the overall architecture?">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-            What is the overall architecture?
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            Overall architecture
           </button>
           <button class="chat-suggestion" data-question="How do the main components work together?">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            How do components work together?
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            Component interactions
           </button>
           <button class="chat-suggestion" data-question="What are the key concepts I should understand?">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            What are the key concepts?
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            Key concepts
           </button>
           <button class="chat-suggestion" data-question="Show me how the main components work together">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M10 6.5h4M10 17.5h4M6.5 10v4M17.5 10v4"/></svg>
-            Show component flow diagram
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            Flow diagram
           </button>
         </div>
       </div>
     </div>
     <div class="chat-input-area">
-      <textarea class="chat-input" placeholder="Ask a question about this documentation..." rows="1"></textarea>
+      <textarea class="chat-input" placeholder="Ask a question..." rows="1"></textarea>
       <button class="chat-send" title="Send message" disabled>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="22" y1="2" x2="11" y2="13"></line>
           <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
         </svg>
       </button>
     </div>
-  </div>
+  </aside>
+
+  <!-- Chat toggle button (always visible) -->
+  <button class="chat-toggle-btn" aria-label="Toggle AI chat" title="AI Assistant">
+    <svg class="chat-toggle-icon-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+    </svg>
+    <svg class="chat-toggle-icon-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </button>
   ` : ''}
 
   <!-- Toast notifications -->

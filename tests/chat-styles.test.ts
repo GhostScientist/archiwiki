@@ -11,14 +11,14 @@ import { getStyles } from '../src/site/styles.js';
 describe('Chat CSS Styles', () => {
   const styles = getStyles();
 
-  describe('Chat Trigger Styles', () => {
-    it('should include chat-trigger class', () => {
-      expect(styles).toContain('.chat-trigger');
+  describe('Chat Toggle Button Styles', () => {
+    it('should include chat-toggle-btn class', () => {
+      expect(styles).toContain('.chat-toggle-btn');
     });
 
-    it('should include notification indicator', () => {
-      expect(styles).toContain('.chat-trigger::after');
-      expect(styles).toContain('.chat-trigger.has-notification');
+    it('should include icon visibility toggles', () => {
+      expect(styles).toContain('.chat-toggle-icon-close');
+      expect(styles).toContain('.chat-toggle-icon-open');
     });
   });
 
@@ -31,20 +31,17 @@ describe('Chat CSS Styles', () => {
       expect(styles).toContain('position: fixed');
     });
 
-    it('should have defined dimensions', () => {
-      expect(styles).toContain('width: 400px');
-      expect(styles).toContain('max-width:');
-      expect(styles).toContain('max-height:');
+    it('should have defined dimensions for side panel', () => {
+      expect(styles).toContain('width: 380px');
     });
 
-    it('should include open state', () => {
-      expect(styles).toContain('.chat-panel.open');
+    it('should include body.chat-open state', () => {
+      expect(styles).toContain('body.chat-open .chat-panel');
     });
 
     it('should have transition animations', () => {
       expect(styles).toContain('transition:');
       expect(styles).toContain('transform:');
-      expect(styles).toContain('opacity:');
     });
   });
 

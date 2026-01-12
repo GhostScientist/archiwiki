@@ -876,45 +876,44 @@ export function getClientScripts(features: Features): string {
 
   function initAIChat() {
     const panel = document.querySelector('.chat-panel');
-    const trigger = document.querySelector('.chat-trigger');
-    const closeBtn = panel?.querySelector('.chat-panel-close');
+    const toggleBtn = document.querySelector('.chat-toggle-btn');
+    const collapseBtn = panel?.querySelector('.chat-panel-collapse');
     const input = panel?.querySelector('.chat-input');
     const sendBtn = panel?.querySelector('.chat-send');
     const messagesContainer = panel?.querySelector('.chat-messages');
 
-    if (!panel || !trigger) return;
+    if (!panel || !toggleBtn) return;
 
     // Detect browser capabilities on init
     browserCapabilities.detect().then(() => {
       updateRuntimeBadge();
     });
 
-    // Open/close chat panel
-    trigger.addEventListener('click', () => {
-      panel.classList.toggle('open');
-      if (panel.classList.contains('open')) {
+    // Toggle chat panel open/close
+    function toggleChatPanel() {
+      const isOpen = document.body.classList.toggle('chat-open');
+      if (isOpen) {
         loadAIModel();
         input?.focus();
       }
-    });
+    }
 
-    closeBtn?.addEventListener('click', () => {
-      panel.classList.remove('open');
-    });
+    toggleBtn.addEventListener('click', toggleChatPanel);
+    collapseBtn?.addEventListener('click', toggleChatPanel);
 
     // Close on escape key
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && panel.classList.contains('open')) {
-        panel.classList.remove('open');
+      if (e.key === 'Escape' && document.body.classList.contains('chat-open')) {
+        document.body.classList.remove('chat-open');
       }
     });
 
-    // Close on click outside (optional, for better UX)
-    document.addEventListener('click', (e) => {
-      if (panel.classList.contains('open') &&
-          !panel.contains(e.target) &&
-          !trigger.contains(e.target)) {
-        panel.classList.remove('open');
+    // SPA navigation for links in chat
+    messagesContainer?.addEventListener('click', (e) => {
+      const link = e.target.closest('a[href]');
+      if (link && link.href && !link.href.startsWith('http') && !link.classList.contains('source-link')) {
+        e.preventDefault();
+        navigateWithSPA(link.href, link);
       }
     });
 
@@ -1981,6 +1980,79 @@ export function getClientScripts(features: Features): string {
 
     return answer;
   }
+
+  // SPA-like navigation for chat links
+  async function navigateWithSPA(url, linkElement) {
+    // Add loading state
+    if (linkElement) {
+      linkElement.classList.add('loading');
+    }
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Failed to fetch page');
+
+      const html = await response.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+
+      // Extract the main content
+      const newContent = doc.querySelector('.page-content');
+      const newTitle = doc.querySelector('.page-title')?.textContent || document.title;
+      const currentContent = document.querySelector('.page-content');
+
+      if (newContent && currentContent) {
+        // Update the page content
+        currentContent.innerHTML = newContent.innerHTML;
+
+        // Update the page title
+        document.title = newTitle;
+
+        // Update browser history
+        window.history.pushState({ url }, newTitle, url);
+
+        // Scroll main content to top
+        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+
+        // Update active nav item
+        document.querySelectorAll('.nav-item').forEach(item => {
+          item.classList.remove('active');
+          const link = item.querySelector('a');
+          if (link && link.href === url) {
+            item.classList.add('active');
+          }
+        });
+
+        // Re-initialize any dynamic features in new content
+        if (window.mermaid) {
+          document.querySelectorAll('.page-content .mermaid').forEach(el => {
+            try {
+              window.mermaid.init(undefined, el);
+            } catch (e) {
+              console.warn('Mermaid init error:', e);
+            }
+          });
+        }
+
+        showToast('Navigated to: ' + newTitle, 'success');
+      }
+    } catch (error) {
+      console.error('SPA navigation error:', error);
+      // Fallback to regular navigation
+      window.location.href = url;
+    } finally {
+      if (linkElement) {
+        linkElement.classList.remove('loading');
+      }
+    }
+  }
+
+  // Handle browser back/forward
+  window.addEventListener('popstate', (e) => {
+    if (e.state?.url) {
+      navigateWithSPA(e.state.url, null);
+    }
+  });
   ` : ''}
 
   // ========================================

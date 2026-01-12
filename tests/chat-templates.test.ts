@@ -25,27 +25,27 @@ describe('Chat UI Templates', () => {
     theme: 'auto' as const
   };
 
-  describe('Chat Trigger Button', () => {
-    it('should include chat trigger button when aiChat is enabled', () => {
+  describe('Chat Toggle Button', () => {
+    it('should include chat toggle button when aiChat is enabled', () => {
       const html = templates.page({
         ...baseTemplateData,
         features: { aiChat: true }
       });
 
-      expect(html).toContain('chat-trigger');
-      expect(html).toContain('Ask AI about this documentation');
+      expect(html).toContain('chat-toggle-btn');
+      expect(html).toContain('AI Assistant');
     });
 
-    it('should not include chat trigger button when aiChat is disabled', () => {
+    it('should not include chat toggle button when aiChat is disabled', () => {
       const html = templates.page({
         ...baseTemplateData,
         features: { aiChat: false }
       });
 
-      expect(html).not.toContain('chat-trigger');
+      expect(html).not.toContain('chat-toggle-btn');
     });
 
-    it('should have correct SVG icon for chat trigger', () => {
+    it('should have correct SVG icon for chat toggle', () => {
       const html = templates.page({
         ...baseTemplateData,
         features: { aiChat: true }
@@ -64,8 +64,7 @@ describe('Chat UI Templates', () => {
       });
 
       expect(html).toContain('chat-panel');
-      expect(html).toContain('role="dialog"');
-      expect(html).toContain('aria-modal="true"');
+      expect(html).toContain('role="complementary"');
       expect(html).toContain('aria-label="AI Chat Assistant"');
     });
 
@@ -86,7 +85,7 @@ describe('Chat UI Templates', () => {
 
       expect(html).toContain('chat-panel-header');
       expect(html).toContain('chat-panel-title');
-      expect(html).toContain('Ask AI');
+      expect(html).toContain('AI Assistant');
     });
 
     it('should include model badge showing SmolLM2', () => {
@@ -99,14 +98,14 @@ describe('Chat UI Templates', () => {
       expect(html).toContain('SmolLM2');
     });
 
-    it('should include close button', () => {
+    it('should include collapse button', () => {
       const html = templates.page({
         ...baseTemplateData,
         features: { aiChat: true }
       });
 
-      expect(html).toContain('chat-panel-close');
-      expect(html).toContain('aria-label="Close chat"');
+      expect(html).toContain('chat-panel-collapse');
+      expect(html).toContain('aria-label="Collapse chat panel"');
     });
   });
 
@@ -143,7 +142,7 @@ describe('Chat UI Templates', () => {
 
       expect(html).toContain('chat-welcome');
       expect(html).toContain('chat-welcome-icon');
-      expect(html).toContain('Ask about this documentation');
+      expect(html).toContain('Ask about these docs');
     });
 
     it('should include welcome description', () => {
@@ -152,8 +151,7 @@ describe('Chat UI Templates', () => {
         features: { aiChat: true }
       });
 
-      expect(html).toContain('search through the wiki');
-      expect(html).toContain('provide answers');
+      expect(html).toContain('answers with links');
       expect(html).toContain('SmolLM2');
     });
   });
@@ -175,9 +173,9 @@ describe('Chat UI Templates', () => {
         features: { aiChat: true }
       });
 
-      expect(html).toContain('What is the overall architecture?');
-      expect(html).toContain('How do components work together?');
-      expect(html).toContain('What are the key concepts?');
+      expect(html).toContain('Overall architecture');
+      expect(html).toContain('Component interactions');
+      expect(html).toContain('Key concepts');
     });
 
     it('should have data-question attributes on suggestion buttons', () => {
@@ -210,7 +208,7 @@ describe('Chat UI Templates', () => {
 
       expect(html).toContain('chat-input');
       expect(html).toContain('textarea');
-      expect(html).toContain('placeholder="Ask a question about this documentation..."');
+      expect(html).toContain('placeholder="Ask a question..."');
     });
 
     it('should include send button', () => {
@@ -295,18 +293,17 @@ describe('Chat UI Templates', () => {
         features: { aiChat: true }
       });
 
-      expect(html).toContain('role="dialog"');
-      expect(html).toContain('aria-modal="true"');
+      expect(html).toContain('role="complementary"');
       expect(html).toContain('aria-label="AI Chat Assistant"');
     });
 
-    it('should have aria-label on close button', () => {
+    it('should have aria-label on collapse button', () => {
       const html = templates.page({
         ...baseTemplateData,
         features: { aiChat: true }
       });
 
-      expect(html).toContain('aria-label="Close chat"');
+      expect(html).toContain('aria-label="Collapse chat panel"');
     });
 
     it('should have title attributes on buttons', () => {
@@ -315,7 +312,7 @@ describe('Chat UI Templates', () => {
         features: { aiChat: true }
       });
 
-      expect(html).toContain('title="Ask AI about this documentation"');
+      expect(html).toContain('title="AI Assistant"');
       expect(html).toContain('title="Send message"');
     });
   });
