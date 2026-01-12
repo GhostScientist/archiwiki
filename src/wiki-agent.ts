@@ -2053,60 +2053,96 @@ Remember: Every architectural concept MUST include file:line references to the s
    */
   async verifyWikiCompleteness(wikiDir: string): Promise<{
     totalPages: number;
-    brokenLinks: Array<{ source: string; target: string; linkText: string }>;
+    brokenLinks: Array<{ source: string; target: string; linkText: string; resolvedTarget: string }>;
     missingPages: string[];
     isComplete: boolean;
   }> {
     const wikiFiles = this.findAllWikiFiles(wikiDir);
-    const existingPages = new Set(wikiFiles.map(f =>
+    const absoluteWikiDir = path.resolve(wikiDir);
+
+    // Build set of existing pages using normalized absolute paths
+    const existingPagesAbsolute = new Set(wikiFiles.map(f => path.resolve(f)));
+    const existingPagesRelative = new Set(wikiFiles.map(f =>
       path.relative(wikiDir, f).replace(/\\/g, '/')
     ));
 
-    const brokenLinks: Array<{ source: string; target: string; linkText: string }> = [];
+    const brokenLinks: Array<{ source: string; target: string; linkText: string; resolvedTarget: string }> = [];
     const allReferencedPages = new Set<string>();
+    const seenBrokenTargets = new Set<string>(); // Track unique broken targets by resolved path
 
     for (const file of wikiFiles) {
       const content = fs.readFileSync(file, 'utf-8');
       const relativePath = path.relative(wikiDir, file).replace(/\\/g, '/');
       const fileDir = path.dirname(file);
 
-      const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
-      let match;
+      // Match markdown links: [text](path) and also wiki-style [[links]]
+      const mdLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+      const wikiLinkRegex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
-      while ((match = linkRegex.exec(content)) !== null) {
-        const linkText = match[1];
-        const linkPath = match[2];
-
+      const processLink = (linkText: string, linkPath: string) => {
+        // Skip external links, anchors, and source code references
         if (linkPath.startsWith('http://') ||
             linkPath.startsWith('https://') ||
             linkPath.startsWith('#') ||
+            linkPath.startsWith('mailto:') ||
             linkPath.includes('github.com') ||
-            linkPath.match(/\.(ts|js|py|go|rs|java|tsx|jsx)[:L#]/)) {
-          continue;
+            linkPath.match(/\.(ts|js|py|go|rs|java|tsx|jsx|cbl|cob|cpy|jcl)[:L#]/i)) {
+          return;
         }
 
+        // Handle .md links
         if (linkPath.endsWith('.md') || linkPath.includes('.md#')) {
           const cleanPath = linkPath.split('#')[0];
+
+          // Resolve the path relative to the source file's directory
           const resolvedPath = path.resolve(fileDir, cleanPath);
-          const relativeResolved = path.relative(wikiDir, resolvedPath).replace(/\\/g, '/');
+
+          // Normalize to relative path from wiki root
+          const relativeResolved = path.relative(absoluteWikiDir, resolvedPath).replace(/\\/g, '/');
+
+          // Skip links that resolve outside the wiki directory
+          if (relativeResolved.startsWith('..')) {
+            return;
+          }
 
           allReferencedPages.add(relativeResolved);
 
-          if (!fs.existsSync(resolvedPath)) {
-            brokenLinks.push({
-              source: relativePath,
-              target: cleanPath,
-              linkText
-            });
+          // Check if the file exists
+          if (!existingPagesAbsolute.has(resolvedPath)) {
+            // Only add if we haven't seen this resolved target before
+            if (!seenBrokenTargets.has(relativeResolved)) {
+              seenBrokenTargets.add(relativeResolved);
+              brokenLinks.push({
+                source: relativePath,
+                target: cleanPath,  // Original link for display
+                linkText,
+                resolvedTarget: relativeResolved  // Normalized path for deduplication
+              });
+            }
           }
         }
+      };
+
+      // Process markdown links
+      let match;
+      while ((match = mdLinkRegex.exec(content)) !== null) {
+        processLink(match[1], match[2]);
+      }
+
+      // Process wiki-style links [[Page Name]] or [[path/to/page|Display Name]]
+      while ((match = wikiLinkRegex.exec(content)) !== null) {
+        const linkTarget = match[1].trim();
+        // Convert wiki-style to .md path if needed
+        const linkPath = linkTarget.endsWith('.md') ? linkTarget : `${linkTarget}.md`;
+        processLink(linkTarget, linkPath);
       }
     }
 
-    const missingPages = [...allReferencedPages].filter(p => !existingPages.has(p));
+    // Missing pages are referenced pages that don't exist
+    const missingPages = [...allReferencedPages].filter(p => !existingPagesRelative.has(p));
 
     return {
-      totalPages: existingPages.size,
+      totalPages: existingPagesRelative.size,
       brokenLinks,
       missingPages,
       isComplete: brokenLinks.length === 0

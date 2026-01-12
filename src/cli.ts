@@ -483,9 +483,9 @@ program
         return;
       }
 
-      // Show missing pages
+      // Show missing pages (use resolvedTarget for proper deduplication and display)
       console.log(chalk.yellow.bold('Missing pages:'));
-      const uniqueMissing = [...new Set(verification.brokenLinks.map(l => l.target))];
+      const uniqueMissing = [...new Set(verification.brokenLinks.map(l => l.resolvedTarget || l.target))];
       for (const page of uniqueMissing.slice(0, 20)) {
         console.log(chalk.gray(`  • ${page}`));
       }
@@ -493,6 +493,24 @@ program
         console.log(chalk.gray(`  ... and ${uniqueMissing.length - 20} more`));
       }
       console.log();
+
+      // Show which files reference the missing pages (helpful for debugging)
+      if (uniqueMissing.length > 0 && uniqueMissing.length <= 10) {
+        console.log(chalk.gray.dim('Referenced from:'));
+        for (const missing of uniqueMissing) {
+          const refs = verification.brokenLinks
+            .filter(l => (l.resolvedTarget || l.target) === missing)
+            .map(l => l.source);
+          console.log(chalk.gray.dim(`  ${missing}:`));
+          for (const ref of [...new Set(refs)].slice(0, 3)) {
+            console.log(chalk.gray.dim(`    ← ${ref}`));
+          }
+          if (refs.length > 3) {
+            console.log(chalk.gray.dim(`    ... and ${refs.length - 3} more references`));
+          }
+        }
+        console.log();
+      }
 
       if (options.verifyOnly) {
         console.log(chalk.yellow('Verification complete. Run without --verify-only to generate missing pages.'));
@@ -521,7 +539,7 @@ program
         outputDir: options.output,
         model: options.model,
         verbose: options.verbose,
-        missingPages: uniqueMissing,  // Pass missing pages to agent for targeted generation
+        missingPages: uniqueMissing,  // Pass normalized paths for targeted generation
         skipIndex: options.skipIndex,
         directApi: options.directApi,
         maxTurns: options.maxTurns
@@ -616,23 +634,27 @@ program
       } else {
         console.log(chalk.yellow.bold('Broken links found:'));
 
-        // Group by target
-        const byTarget = new Map<string, string[]>();
+        // Group by resolved target (normalized path) for proper deduplication
+        const byTarget = new Map<string, { sources: string[]; originalLink: string }>();
         for (const link of verification.brokenLinks) {
-          if (!byTarget.has(link.target)) {
-            byTarget.set(link.target, []);
+          const key = link.resolvedTarget || link.target;
+          if (!byTarget.has(key)) {
+            byTarget.set(key, { sources: [], originalLink: link.target });
           }
-          byTarget.get(link.target)!.push(link.source);
+          byTarget.get(key)!.sources.push(link.source);
         }
 
-        for (const [target, sources] of byTarget) {
+        console.log(chalk.white(`\nUnique missing pages: ${byTarget.size}`));
+
+        for (const [target, data] of byTarget) {
           console.log(chalk.red(`\n  Missing: ${target}`));
           console.log(chalk.gray(`  Referenced by:`));
-          for (const source of sources.slice(0, 3)) {
+          const uniqueSources = [...new Set(data.sources)];
+          for (const source of uniqueSources.slice(0, 3)) {
             console.log(chalk.gray(`    - ${source}`));
           }
-          if (sources.length > 3) {
-            console.log(chalk.gray(`    ... and ${sources.length - 3} more`));
+          if (uniqueSources.length > 3) {
+            console.log(chalk.gray(`    ... and ${uniqueSources.length - 3} more files`));
           }
         }
 
