@@ -55,7 +55,7 @@ export class LocalLlamaProvider implements LLMProvider {
   private progressCallback?: ProgressCallback;
   private verbose: boolean;
   private modelInfo: ModelInfo | null = null;
-  private modelFamily: ModelFamily = 'lfm'; // Default to LFM for better tool calling
+  private modelFamily: ModelFamily = 'gpt-oss';
   private modelPath: string = '';
 
   constructor(options: LocalLlamaProviderOptions = {}) {
@@ -63,7 +63,7 @@ export class LocalLlamaProvider implements LLMProvider {
     this.modelManager = new ModelManager();
     this.progressCallback = options.onProgress;
     this.verbose = options.verbose ?? false;
-    this.modelFamily = options.modelFamily || 'lfm';
+    this.modelFamily = options.modelFamily || 'gpt-oss';
   }
 
   private log(...args: any[]): void {

@@ -62,10 +62,9 @@ export interface WikiGenerationOptions {
    */
   localModel?: string;
   /**
-   * Model family for local mode: 'lfm' (LiquidAI) or 'qwen'.
-   * LFM is recommended for better tool calling support.
+   * Model family for local mode. Currently only 'gpt-oss' (21B) is supported.
    */
-  modelFamily?: 'lfm' | 'qwen';
+  modelFamily?: 'gpt-oss';
   /**
    * Path to a local GGUF model file.
    */
@@ -1354,7 +1353,11 @@ Create all ${missingPages.length} missing pages now.`;
     allPages: Array<{ title: string; filename: string; type: string }>,
     options: WikiGenerationOptions
   ): Promise<string | null> {
+    console.log(`\n[Local] ════════════════════════════════════════════════════════`);
     console.log(`[Local] generateSinglePage: ${pageSpec.title}`);
+    console.log(`[Local]   Type: ${pageSpec.type}`);
+    console.log(`[Local]   Filename: ${pageSpec.filename}`);
+    console.log(`[Local]   Source files: ${pageSpec.sourceFiles.slice(0, 5).join(', ')}${pageSpec.sourceFiles.length > 5 ? '...' : ''}`);
 
     // Build cross-reference info for the model
     const otherPages = allPages
@@ -1365,7 +1368,7 @@ Create all ${missingPages.length} missing pages now.`;
     // Use RAG to get semantically relevant code chunks
     let ragContext = '';
     if (this.ragSystem && this.ragSystem.getDocumentCount() > 0) {
-      console.log(`[Local]   Using RAG system (${this.ragSystem.getDocumentCount()} chunks indexed)`);
+      console.log(`[Local]   RAG system: ${this.ragSystem.getDocumentCount()} chunks indexed`);
 
       // Search for content relevant to this page's topic
       const searchQueries = [
@@ -1373,15 +1376,21 @@ Create all ${missingPages.length} missing pages now.`;
         pageSpec.context,
         ...pageSpec.sourceFiles.slice(0, 3).map(f => path.basename(f, path.extname(f)))
       ];
+      console.log(`[Local]   Search queries: ${JSON.stringify(searchQueries)}`);
 
       const seenChunks = new Set<string>();
+      const chunkFiles: string[] = [];
       for (const query of searchQueries) {
         try {
+          console.log(`[Local]   Searching for: "${query.slice(0, 50)}..."`);
           const results = await this.ragSystem.search(query, { maxResults: 5 });
+          console.log(`[Local]     Found ${results.length} results`);
+
           for (const result of results) {
             const chunkKey = `${result.filePath}:${result.startLine}`;
             if (seenChunks.has(chunkKey)) continue;
             seenChunks.add(chunkKey);
+            chunkFiles.push(result.filePath);
 
             // Include rich metadata from AST chunking
             const chunkHeader = result.name
@@ -1404,6 +1413,7 @@ Create all ${missingPages.length} missing pages now.`;
         if (ragContext.length > 8000) break;
       }
       console.log(`[Local]   RAG context: ${ragContext.length} chars from ${seenChunks.size} chunks`);
+      console.log(`[Local]   Files in context: ${[...new Set(chunkFiles)].join(', ')}`);
     }
 
     // Fallback: read source files directly if RAG didn't provide enough context
@@ -1455,6 +1465,15 @@ Write the documentation now:`;
     ];
 
     const systemPrompt = `You are a documentation writer. You ONLY write about code that is explicitly shown to you. You never make up or invent features. You describe exactly what you see in the provided source code, nothing more.`;
+
+    // Debug: show prompt stats
+    console.log(`[Local]   ─────────────────────────────────────────────────────`);
+    console.log(`[Local]   PROMPT STATS:`);
+    console.log(`[Local]     System prompt: ${systemPrompt.length} chars`);
+    console.log(`[Local]     User prompt: ${prompt.length} chars`);
+    console.log(`[Local]     RAG context portion: ${ragContext.length} chars`);
+    console.log(`[Local]     Total input: ~${Math.round((systemPrompt.length + prompt.length) / 4)} tokens (est.)`);
+    console.log(`[Local]   ─────────────────────────────────────────────────────`);
 
     // Try up to 2 times
     for (let attempt = 1; attempt <= 2; attempt++) {

@@ -196,7 +196,7 @@ export interface ModelRecommendation {
 /**
  * Model family type for local models
  */
-export type ModelFamily = 'lfm' | 'qwen' | 'gpt-oss';
+export type ModelFamily = 'gpt-oss';
 
 /**
  * Options for creating an LLM provider
@@ -213,7 +213,7 @@ export interface CreateProviderOptions {
   // Local options
   modelPath?: string;
   localModel?: string;
-  modelFamily?: ModelFamily; // 'lfm', 'qwen', or 'gpt-oss'
+  modelFamily?: ModelFamily; // 'gpt-oss' (21B model)
   gpuLayers?: number;
   contextSize?: number;
   threads?: number;

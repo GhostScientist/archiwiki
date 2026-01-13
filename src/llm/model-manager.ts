@@ -17,7 +17,7 @@ import type { HardwareProfile, ModelRecommendation, ProgressCallback } from './t
 /**
  * Model family type for filtering models
  */
-export type ModelFamily = 'lfm' | 'qwen' | 'gpt-oss';
+export type ModelFamily = 'gpt-oss';
 
 /**
  * Extended model recommendation with family
@@ -30,7 +30,7 @@ interface ModelRegistryEntry extends ModelRecommendation {
  * Registry of available models with their hardware requirements
  */
 const MODEL_REGISTRY: ModelRegistryEntry[] = [
-  // GPT-OSS 21B - excellent quality open source model
+  // GPT-OSS 21B - excellent quality open source model (only supported model for now)
   {
     family: 'gpt-oss',
     modelId: 'gpt-oss-20b-q8',
@@ -42,116 +42,6 @@ const MODEL_REGISTRY: ModelRegistryEntry[] = [
     minRam: 16,
     contextLength: 32768,
     quality: 'excellent',
-  },
-  {
-    family: 'gpt-oss',
-    modelId: 'gpt-oss-20b-q6',
-    ggufFile: 'gpt-oss-20b-Q6_K.gguf',
-    downloadUrl:
-      'https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q6_K.gguf',
-    fileSizeBytes: 12_000_000_000, // ~12 GB
-    minVram: 14,
-    minRam: 16,
-    contextLength: 32768,
-    quality: 'excellent',
-  },
-  {
-    family: 'gpt-oss',
-    modelId: 'gpt-oss-20b-q4',
-    ggufFile: 'gpt-oss-20b-Q4_K_M.gguf',
-    downloadUrl:
-      'https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q4_K_M.gguf',
-    fileSizeBytes: 11_600_000_000, // ~11.6 GB
-    minVram: 12,
-    minRam: 14,
-    contextLength: 32768,
-    quality: 'good',
-  },
-  // LiquidAI LFM2.5 models - optimized for on-device agentic tasks
-  {
-    family: 'lfm',
-    modelId: 'lfm2.5-1.2b-instruct',
-    ggufFile: 'LFM2.5-1.2B-Instruct-Q8_0.gguf',
-    downloadUrl:
-      'https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q8_0.gguf',
-    fileSizeBytes: 1_300_000_000, // ~1.3 GB
-    minVram: 2,
-    minRam: 4,
-    contextLength: 32768,
-    quality: 'good', // Excellent for size, good absolute quality
-  },
-  {
-    family: 'lfm',
-    modelId: 'lfm2-2.6b-exp',
-    ggufFile: 'LFM2-2.6B-Exp-Q8_0.gguf',
-    downloadUrl:
-      'https://huggingface.co/LiquidAI/LFM2-2.6B-Exp-GGUF/resolve/main/LFM2-2.6B-Exp-Q8_0.gguf',
-    fileSizeBytes: 2_800_000_000, // ~2.8 GB
-    minVram: 3,
-    minRam: 6,
-    contextLength: 32768,
-    quality: 'good',
-  },
-  // Qwen2.5 Coder models - larger, higher quality
-  {
-    family: 'qwen',
-    modelId: 'qwen2.5-coder-32b-q4',
-    ggufFile: 'qwen2.5-coder-32b-instruct-q4_k_m.gguf',
-    downloadUrl:
-      'https://huggingface.co/Qwen/Qwen2.5-Coder-32B-Instruct-GGUF/resolve/main/qwen2.5-coder-32b-instruct-q4_k_m.gguf',
-    fileSizeBytes: 19_500_000_000, // ~19.5 GB
-    minVram: 20,
-    minRam: 24,
-    contextLength: 131072,
-    quality: 'excellent',
-  },
-  {
-    family: 'qwen',
-    modelId: 'qwen2.5-coder-14b-q5',
-    ggufFile: 'qwen2.5-coder-14b-instruct-q5_k_m.gguf',
-    downloadUrl:
-      'https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q5_k_m.gguf',
-    fileSizeBytes: 10_200_000_000, // ~10.2 GB
-    minVram: 12,
-    minRam: 16,
-    contextLength: 131072,
-    quality: 'excellent',
-  },
-  {
-    family: 'qwen',
-    modelId: 'qwen2.5-coder-7b-q5',
-    ggufFile: 'qwen2.5-coder-7b-instruct-q5_k_m.gguf',
-    downloadUrl:
-      'https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf',
-    fileSizeBytes: 5_500_000_000, // ~5.5 GB
-    minVram: 6,
-    minRam: 8,
-    contextLength: 131072,
-    quality: 'good',
-  },
-  {
-    family: 'qwen',
-    modelId: 'qwen2.5-coder-3b-q8',
-    ggufFile: 'qwen2.5-coder-3b-instruct-q8_0.gguf',
-    downloadUrl:
-      'https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q8_0.gguf',
-    fileSizeBytes: 3_400_000_000, // ~3.4 GB
-    minVram: 4,
-    minRam: 6,
-    contextLength: 32768,
-    quality: 'acceptable',
-  },
-  {
-    family: 'qwen',
-    modelId: 'qwen2.5-coder-1.5b-q8',
-    ggufFile: 'qwen2.5-coder-1.5b-instruct-q8_0.gguf',
-    downloadUrl:
-      'https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q8_0.gguf',
-    fileSizeBytes: 1_800_000_000, // ~1.8 GB
-    minVram: 2,
-    minRam: 4,
-    contextLength: 32768,
-    quality: 'acceptable',
   },
 ];
 
@@ -325,12 +215,6 @@ export class ModelManager {
       if (hardware.systemRam >= m.minRam) return true;
       return false;
     }).sort((a, b) => {
-      // For LFM models, prefer the instruct variant first (best for agentic tasks)
-      if (family === 'lfm') {
-        const aIsInstruct = a.modelId.includes('instruct') ? 0 : 1;
-        const bIsInstruct = b.modelId.includes('instruct') ? 0 : 1;
-        if (aIsInstruct !== bIsInstruct) return aIsInstruct - bIsInstruct;
-      }
       // Prefer higher quality first
       const qualityOrder = { excellent: 0, good: 1, acceptable: 2 };
       if (a.quality !== b.quality) {
