@@ -17,7 +17,7 @@ import type { HardwareProfile, ModelRecommendation, ProgressCallback } from './t
 /**
  * Model family type for filtering models
  */
-export type ModelFamily = 'lfm' | 'qwen';
+export type ModelFamily = 'lfm' | 'qwen' | 'gpt-oss';
 
 /**
  * Extended model recommendation with family
@@ -30,6 +30,43 @@ interface ModelRegistryEntry extends ModelRecommendation {
  * Registry of available models with their hardware requirements
  */
 const MODEL_REGISTRY: ModelRegistryEntry[] = [
+  // GPT-OSS 21B - excellent quality open source model
+  {
+    family: 'gpt-oss',
+    modelId: 'gpt-oss-20b-q8',
+    ggufFile: 'gpt-oss-20b-Q8_0.gguf',
+    downloadUrl:
+      'https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q8_0.gguf',
+    fileSizeBytes: 12_100_000_000, // ~12.1 GB
+    minVram: 14,
+    minRam: 16,
+    contextLength: 32768,
+    quality: 'excellent',
+  },
+  {
+    family: 'gpt-oss',
+    modelId: 'gpt-oss-20b-q6',
+    ggufFile: 'gpt-oss-20b-Q6_K.gguf',
+    downloadUrl:
+      'https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q6_K.gguf',
+    fileSizeBytes: 12_000_000_000, // ~12 GB
+    minVram: 14,
+    minRam: 16,
+    contextLength: 32768,
+    quality: 'excellent',
+  },
+  {
+    family: 'gpt-oss',
+    modelId: 'gpt-oss-20b-q4',
+    ggufFile: 'gpt-oss-20b-Q4_K_M.gguf',
+    downloadUrl:
+      'https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q4_K_M.gguf',
+    fileSizeBytes: 11_600_000_000, // ~11.6 GB
+    minVram: 12,
+    minRam: 14,
+    contextLength: 32768,
+    quality: 'good',
+  },
   // LiquidAI LFM2.5 models - optimized for on-device agentic tasks
   {
     family: 'lfm',

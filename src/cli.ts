@@ -87,7 +87,7 @@ program
   // Local mode options
   .option('--full-local', 'Run entirely locally without cloud APIs (requires initial model download)')
   .option('--local-model <model>', 'Local model to use (default: auto-selected based on hardware)')
-  .option('--model-family <family>', 'Model family: "lfm" (LiquidAI, default) or "qwen"', 'lfm')
+  .option('--model-family <family>', 'Model family: "gpt-oss" (21B, default), "qwen", or "lfm"', 'gpt-oss')
   .option('--model-path <path>', 'Path to a local GGUF model file')
   .option('--use-ollama', 'Use Ollama server instead of bundled inference')
   .option('--ollama-host <url>', 'Ollama server URL (default: http://localhost:11434)')
