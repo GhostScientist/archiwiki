@@ -781,6 +781,14 @@ export class ArchitecturalWikiAgent {
       return;
     }
 
+    // For local mode with native function calling, set the tool executor
+    if (options.fullLocal && 'setToolExecutor' in provider) {
+      console.log('[Local] Setting up tool executor for native function calling...');
+      (provider as any).setToolExecutor(async (name: string, args: Record<string, unknown>): Promise<string> => {
+        return await this.executeDirectApiTool(name, args as Record<string, any>);
+      });
+    }
+
     const modelInfo = provider.getModelInfo();
     const maxTurns = options.maxTurns || 200;
     const prompt = this.buildGenerationPrompt(options);

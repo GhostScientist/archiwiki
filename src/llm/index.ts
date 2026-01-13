@@ -38,6 +38,13 @@ import type { LLMProvider, CreateProviderOptions } from './types.js';
 export async function createLLMProvider(options: CreateProviderOptions = {}): Promise<LLMProvider> {
   let provider: LLMProvider;
 
+  console.log('[createLLMProvider] Options:', {
+    fullLocal: options.fullLocal,
+    useOllama: options.useOllama,
+    verbose: options.verbose,
+    localModel: options.localModel
+  });
+
   if (options.fullLocal) {
     if (options.useOllama) {
       // Use external Ollama server
@@ -47,6 +54,7 @@ export async function createLLMProvider(options: CreateProviderOptions = {}): Pr
         model: options.localModel || 'qwen2.5-coder:14b',
         onProgress: options.onProgress,
       });
+      console.log('[createLLMProvider] Created OllamaProvider');
     } else {
       // Use bundled node-llama-cpp (default for --full-local)
       console.log('🏠 Using self-contained local mode...\n');
@@ -59,6 +67,7 @@ export async function createLLMProvider(options: CreateProviderOptions = {}): Pr
         onProgress: options.onProgress,
         verbose: options.verbose,
       });
+      console.log('[createLLMProvider] Created LocalLlamaProvider with verbose:', options.verbose);
     }
   } else {
     // Use cloud Anthropic API
@@ -67,9 +76,12 @@ export async function createLLMProvider(options: CreateProviderOptions = {}): Pr
       model: options.model || 'claude-sonnet-4-20250514',
       onProgress: options.onProgress,
     });
+    console.log('[createLLMProvider] Created AnthropicProvider');
   }
 
+  console.log('[createLLMProvider] Calling provider.initialize()...');
   await provider.initialize();
+  console.log('[createLLMProvider] Provider initialized, returning');
   return provider;
 }
 

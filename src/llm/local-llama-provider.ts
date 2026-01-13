@@ -168,11 +168,18 @@ export class LocalLlamaProvider implements LLMProvider {
     tools: LLMTool[],
     options: LLMProviderOptions
   ): Promise<LLMResponse> {
+    // Always log entry to chat() for debugging
+    console.log('[LocalLLM] chat() called with', messages.length, 'messages,', tools.length, 'tools');
+    console.log('[LocalLLM] verbose mode:', this.verbose);
+
     if (!this.context || !this.model || !this.llama) {
+      console.log('[LocalLLM] ERROR: Provider not initialized!');
       throw new Error('Provider not initialized. Call initialize() first.');
     }
 
+    console.log('[LocalLLM] Context and model are available, loading node-llama-cpp...');
     const { LlamaChatSession, defineChatSessionFunction } = await import('node-llama-cpp');
+    console.log('[LocalLLM] node-llama-cpp imported successfully');
 
     // Create a new chat session
     const session = new LlamaChatSession({
@@ -234,6 +241,9 @@ export class LocalLlamaProvider implements LLMProvider {
       }
     }
 
+    console.log('[LocalLLM] Preparing to call session.prompt()...');
+    console.log('[LocalLLM] Last user message length:', lastUserMessage.length);
+    console.log('[LocalLLM] Message preview:', lastUserMessage.slice(0, 200) + '...');
     this.log('\n📝 Prompt to model:');
     this.log('─'.repeat(60));
     this.log(lastUserMessage.slice(0, 500) + (lastUserMessage.length > 500 ? '\n...[truncated]' : ''));
@@ -249,9 +259,14 @@ export class LocalLlamaProvider implements LLMProvider {
       // Only pass functions if we have any
       if (Object.keys(functions).length > 0) {
         promptOptions.functions = functions;
+        console.log('[LocalLLM] Passing', Object.keys(functions).length, 'functions to prompt');
+      } else {
+        console.log('[LocalLLM] No functions to pass');
       }
 
+      console.log('[LocalLLM] Calling session.prompt() now...');
       responseText = await session.prompt(lastUserMessage, promptOptions);
+      console.log('[LocalLLM] session.prompt() returned, response length:', responseText.length);
 
       this.log('\n📤 Model response:');
       this.log('─'.repeat(60));
@@ -272,8 +287,8 @@ export class LocalLlamaProvider implements LLMProvider {
 
     } catch (error) {
       const err = error as Error;
-      console.error('Chat error:', err.message);
-      this.log('Full error:', err.stack);
+      console.error('[LocalLLM] ❌ CHAT ERROR:', err.message);
+      console.error('[LocalLLM] Error stack:', err.stack);
       return {
         content: '',
         toolCalls: [],
@@ -282,7 +297,7 @@ export class LocalLlamaProvider implements LLMProvider {
       };
     }
 
-    return {
+    const result: LLMResponse = {
       content: responseText,
       toolCalls,
       stopReason: toolCalls.length > 0 ? 'tool_use' : 'end_turn',
@@ -291,6 +306,14 @@ export class LocalLlamaProvider implements LLMProvider {
         outputTokens: 0,
       },
     };
+
+    console.log('[LocalLLM] chat() returning:', {
+      contentLength: result.content.length,
+      toolCallCount: result.toolCalls.length,
+      stopReason: result.stopReason
+    });
+
+    return result;
   }
 
   /**
