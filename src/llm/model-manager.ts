@@ -10,7 +10,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { createWriteStream } from 'fs';
 import { mkdir } from 'fs/promises';
-import { Transform } from 'stream';
+import { Transform, Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import type { HardwareProfile, ModelRecommendation, ProgressCallback } from './types.js';
 
@@ -451,7 +451,7 @@ function convertWebStreamToNodeStream(
 ): NodeJS.ReadableStream {
   const reader = webStream.getReader();
 
-  return new (require('stream').Readable)({
+  return new Readable({
     async read() {
       try {
         const { done, value } = await reader.read();
