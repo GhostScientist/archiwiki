@@ -746,7 +746,7 @@ export class ArchitecturalWikiAgent {
         contextSize: options.contextSize,
         threads: options.threads,
         model: options.model,
-        apiKey: this.apiKey,
+        apiKey: this.config.apiKey,
       });
     } catch (error) {
       const err = error as Error;
@@ -762,7 +762,7 @@ export class ArchitecturalWikiAgent {
     const tools = this.buildDirectApiTools();
     const llmTools: LLMTool[] = tools.map(t => ({
       name: t.name,
-      description: t.description,
+      description: t.description || '',
       parameters: t.input_schema as any
     }));
 
@@ -816,8 +816,12 @@ export class ArchitecturalWikiAgent {
           console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Usage: input=${response.usage.inputTokens}, output=${response.usage.outputTokens}`);
         }
 
-        // Process response content
-        const assistantContent: Anthropic.ContentBlock[] = [];
+        // Process response content - use explicit type for our content blocks
+        type LocalContentBlock =
+          | { type: 'text'; text: string }
+          | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
+
+        const assistantContent: LocalContentBlock[] = [];
         const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = [];
 
         // Handle text content
@@ -842,7 +846,7 @@ export class ArchitecturalWikiAgent {
             type: 'tool_use',
             id: toolCall.id,
             name: toolCall.name,
-            input: toolCall.arguments
+            input: toolCall.arguments as Record<string, unknown>
           });
 
           // Execute the tool
@@ -860,21 +864,23 @@ export class ArchitecturalWikiAgent {
         }
 
         // Add assistant message with text and tool uses
+        // Map to our ContentBlock types from ./llm/types
+        const mappedContent = assistantContent.map(block => {
+          if (block.type === 'text') {
+            return { type: 'text' as const, text: block.text };
+          } else {
+            return {
+              type: 'tool_use' as const,
+              id: block.id,
+              name: block.name,
+              input: block.input
+            };
+          }
+        });
+
         const assistantMsg: LLMMessage = {
           role: 'assistant',
-          content: assistantContent.map(block => {
-            if (block.type === 'text') {
-              return { type: 'text' as const, text: block.text };
-            } else if (block.type === 'tool_use') {
-              return {
-                type: 'tool_use' as const,
-                id: block.id,
-                name: block.name,
-                input: block.input as Record<string, unknown>
-              };
-            }
-            return block;
-          })
+          content: mappedContent
         };
         messages.push(assistantMsg);
 

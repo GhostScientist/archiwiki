@@ -4,7 +4,16 @@
  * Shared types and interfaces for all LLM providers (Anthropic, Local, Ollama)
  */
 
-import type { JSONSchema7 } from 'json-schema';
+// JSON Schema type for tool parameters
+export type JSONSchema = {
+  type?: string;
+  properties?: Record<string, JSONSchema>;
+  required?: string[];
+  items?: JSONSchema;
+  description?: string;
+  enum?: string[];
+  [key: string]: unknown;
+};
 
 /**
  * Content block types for complex message content
@@ -46,7 +55,7 @@ export interface LLMMessage {
 export interface LLMTool {
   name: string;
   description: string;
-  parameters: JSONSchema7;
+  parameters: JSONSchema;
 }
 
 /**

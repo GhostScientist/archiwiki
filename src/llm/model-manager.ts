@@ -325,6 +325,9 @@ export class ModelManager {
     let lastProgressUpdate = Date.now();
     let lastBytes = 0;
 
+    // Capture reference to the progress callback
+    const progressCallback = this.progressCallback;
+
     // Create progress tracking transform stream
     const progressTracker = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
@@ -355,8 +358,8 @@ export class ModelManager {
           lastBytes = downloadedBytes;
 
           // Call progress callback if set
-          if (this.progressCallback) {
-            this.progressCallback({
+          if (progressCallback) {
+            progressCallback({
               phase: 'downloading',
               percent,
               message: `${downloaded}/${total} GB`,
@@ -365,7 +368,7 @@ export class ModelManager {
         }
 
         callback(null, chunk);
-      }.bind(this),
+      },
     });
 
     // Pipe response to file with progress tracking

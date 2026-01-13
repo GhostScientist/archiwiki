@@ -170,8 +170,8 @@ export class LocalLlamaProvider implements LLMProvider {
     // Build the conversation history
     const conversationHistory = this.buildConversationHistory(messages);
 
-    // Convert tools to function definitions
-    const functions = await this.convertToolsToFunctions(tools);
+    // Convert tools to function definitions (pass session for tool call capture)
+    const functions = await this.convertToolsToFunctions(tools, session);
 
     // Get the last user message
     const lastUserMessage = this.getLastUserMessage(messages);
@@ -186,25 +186,29 @@ export class LocalLlamaProvider implements LLMProvider {
     try {
       // Prompt the model with function calling support
       if (Object.keys(functions).length > 0) {
-        // With tools
+        // With tools - tool calls are captured via the handlers in convertToolsToFunctions
         responseText = await session.prompt(lastUserMessage, {
           maxTokens: options.maxTokens,
           temperature: options.temperature ?? 0.7,
-          stopOnAbortSignal: true,
           functions,
-          documentFunctionParams: true,
-          onFunctionCall: async (call) => {
-            // Record the tool call
+        });
+
+        // Extract tool calls from the captured calls array
+        // (set during defineChatSessionFunction handlers)
+        const capturedCalls = (session as any).__toolCalls as Array<{
+          name: string;
+          params: Record<string, unknown>;
+        }> | undefined;
+
+        if (capturedCalls && capturedCalls.length > 0) {
+          for (const call of capturedCalls) {
             toolCalls.push({
               id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-              name: call.functionName,
-              arguments: call.params as Record<string, unknown>,
+              name: call.name,
+              arguments: call.params,
             });
-
-            // Return a placeholder - actual execution happens in the main loop
-            return { _pending: true, message: 'Tool execution pending' };
-          },
-        });
+          }
+        }
       } else {
         // Without tools
         responseText = await session.prompt(lastUserMessage, {
@@ -265,21 +269,31 @@ export class LocalLlamaProvider implements LLMProvider {
 
   /**
    * Convert LLM tools to node-llama-cpp function format
+   * The session object is used to store captured tool calls
    */
   private async convertToolsToFunctions(
-    tools: LLMTool[]
+    tools: LLMTool[],
+    session: LlamaChatSessionType
   ): Promise<Record<string, ReturnType<LlamaModule['defineChatSessionFunction']>>> {
     const { defineChatSessionFunction } = await import('node-llama-cpp');
     const functions: Record<string, ReturnType<typeof defineChatSessionFunction>> = {};
 
+    // Initialize tool calls array on session
+    (session as any).__toolCalls = [];
+
     for (const tool of tools) {
-      functions[tool.name] = defineChatSessionFunction({
+      const toolName = tool.name;
+      functions[toolName] = defineChatSessionFunction({
         description: tool.description,
         params: tool.parameters as any,
         handler: async (params) => {
-          // This handler is called during inference
-          // We intercept via onFunctionCall instead
-          return { _pending: true };
+          // Capture the tool call for later processing
+          (session as any).__toolCalls.push({
+            name: toolName,
+            params: (params ?? {}) as Record<string, unknown>,
+          });
+          // Return a placeholder - actual execution happens in the main loop
+          return { _pending: true, message: 'Tool execution pending' };
         },
       });
     }
