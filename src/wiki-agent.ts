@@ -773,6 +773,7 @@ export class ArchitecturalWikiAgent {
         threads: options.threads,
         model: options.model,
         apiKey: this.config.apiKey,
+        verbose: options.verbose,
       });
     } catch (error) {
       const err = error as Error;

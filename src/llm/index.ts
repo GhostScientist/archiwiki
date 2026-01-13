@@ -57,6 +57,7 @@ export async function createLLMProvider(options: CreateProviderOptions = {}): Pr
         contextSize: options.contextSize,
         threads: options.threads,
         onProgress: options.onProgress,
+        verbose: options.verbose,
       });
     }
   } else {

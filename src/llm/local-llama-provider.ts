@@ -41,6 +41,8 @@ export interface LocalLlamaProviderOptions {
   threads?: number;
   /** Progress callback for status updates */
   onProgress?: ProgressCallback;
+  /** Enable verbose logging */
+  verbose?: boolean;
 }
 
 /**
@@ -53,6 +55,7 @@ export class LocalLlamaProvider implements LLMProvider {
   private options: LocalLlamaProviderOptions;
   private modelManager: ModelManager;
   private progressCallback?: ProgressCallback;
+  private verbose: boolean = false;
 
   // node-llama-cpp instances (set after initialization)
   private llama: LlamaType | null = null;
@@ -61,10 +64,21 @@ export class LocalLlamaProvider implements LLMProvider {
   private modelPath: string = '';
   private hardware: HardwareProfile | null = null;
 
+  // Tool execution callback - set by the wiki agent
+  private toolExecutor?: (name: string, args: Record<string, unknown>) => Promise<string>;
+
   constructor(options: LocalLlamaProviderOptions = {}) {
     this.options = options;
     this.modelManager = new ModelManager();
     this.progressCallback = options.onProgress;
+    this.verbose = options.verbose ?? false;
+  }
+
+  /**
+   * Set a callback for executing tools during inference
+   */
+  setToolExecutor(executor: (name: string, args: Record<string, unknown>) => Promise<string>): void {
+    this.toolExecutor = executor;
   }
 
   /**
@@ -147,7 +161,7 @@ export class LocalLlamaProvider implements LLMProvider {
   }
 
   /**
-   * Send a chat completion request
+   * Send a chat completion request using node-llama-cpp's native function calling
    */
   async chat(
     messages: LLMMessage[],
@@ -158,18 +172,12 @@ export class LocalLlamaProvider implements LLMProvider {
       throw new Error('Provider not initialized. Call initialize() first.');
     }
 
-    const { LlamaChatSession } = await import('node-llama-cpp');
+    const { LlamaChatSession, defineChatSessionFunction } = await import('node-llama-cpp');
 
-    // Build an enhanced system prompt that includes tool instructions
-    const enhancedSystemPrompt = this.buildSystemPromptWithTools(
-      options.systemPrompt || '',
-      tools
-    );
-
-    // Create a new chat session with enhanced system prompt
+    // Create a new chat session
     const session = new LlamaChatSession({
       contextSequence: this.context.getSequence(),
-      systemPrompt: enhancedSystemPrompt,
+      systemPrompt: options.systemPrompt,
     });
 
     // Get the last user message
@@ -182,24 +190,90 @@ export class LocalLlamaProvider implements LLMProvider {
     const toolCalls: LLMToolCall[] = [];
     let responseText = '';
 
+    // Convert tools to node-llama-cpp function format
+    const functions: Record<string, ReturnType<typeof defineChatSessionFunction>> = {};
+
+    if (tools.length > 0) {
+      this.log('Setting up', tools.length, 'tools for native function calling');
+
+      for (const tool of tools) {
+        const toolName = tool.name;
+        this.log('  - Registering tool:', toolName);
+
+        functions[toolName] = defineChatSessionFunction({
+          description: tool.description,
+          params: this.convertToNodeLlamaSchema(tool.parameters),
+          handler: async (params) => {
+            this.log('🔧 Tool called:', toolName);
+            this.log('   Arguments:', JSON.stringify(params, null, 2));
+
+            // Record the tool call
+            toolCalls.push({
+              id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+              name: toolName,
+              arguments: (params ?? {}) as Record<string, unknown>,
+            });
+
+            // Execute the tool if we have an executor
+            if (this.toolExecutor) {
+              try {
+                const result = await this.toolExecutor(toolName, (params ?? {}) as Record<string, unknown>);
+                this.log('   Result:', result.slice(0, 200) + (result.length > 200 ? '...' : ''));
+                return result;
+              } catch (error) {
+                const errMsg = `Error: ${(error as Error).message}`;
+                this.log('   Error:', errMsg);
+                return errMsg;
+              }
+            }
+
+            // If no executor, return a placeholder
+            return JSON.stringify({ status: 'executed', tool: toolName });
+          },
+        });
+      }
+    }
+
+    this.log('\n📝 Prompt to model:');
+    this.log('─'.repeat(60));
+    this.log(lastUserMessage.slice(0, 500) + (lastUserMessage.length > 500 ? '\n...[truncated]' : ''));
+    this.log('─'.repeat(60));
+
     try {
-      // Prompt the model (tools are described in system prompt)
-      responseText = await session.prompt(lastUserMessage, {
+      // Prompt the model with native function calling
+      const promptOptions: any = {
         maxTokens: options.maxTokens,
         temperature: options.temperature ?? 0.7,
-      });
+      };
 
-      // Parse tool calls from the response text
-      const parsedToolCalls = this.parseToolCallsFromResponse(responseText, tools);
-
-      if (parsedToolCalls.length > 0) {
-        toolCalls.push(...parsedToolCalls);
-        // Remove tool call blocks from the response text for cleaner output
-        responseText = this.removeToolCallsFromResponse(responseText);
+      // Only pass functions if we have any
+      if (Object.keys(functions).length > 0) {
+        promptOptions.functions = functions;
       }
+
+      responseText = await session.prompt(lastUserMessage, promptOptions);
+
+      this.log('\n📤 Model response:');
+      this.log('─'.repeat(60));
+      this.log(responseText.slice(0, 1000) + (responseText.length > 1000 ? '\n...[truncated]' : ''));
+      this.log('─'.repeat(60));
+      this.log('Tool calls captured:', toolCalls.length);
+
+      // If no tool calls were captured via handlers, try parsing from text
+      if (toolCalls.length === 0 && tools.length > 0) {
+        this.log('No native tool calls detected, trying text parsing...');
+        const parsedCalls = this.parseToolCallsFromResponse(responseText, tools);
+        if (parsedCalls.length > 0) {
+          this.log('Found', parsedCalls.length, 'tool calls via text parsing');
+          toolCalls.push(...parsedCalls);
+          responseText = this.removeToolCallsFromResponse(responseText);
+        }
+      }
+
     } catch (error) {
       const err = error as Error;
       console.error('Chat error:', err.message);
+      this.log('Full error:', err.stack);
       return {
         content: '',
         toolCalls: [],
@@ -213,10 +287,26 @@ export class LocalLlamaProvider implements LLMProvider {
       toolCalls,
       stopReason: toolCalls.length > 0 ? 'tool_use' : 'end_turn',
       usage: {
-        // node-llama-cpp doesn't expose token counts easily
         inputTokens: 0,
         outputTokens: 0,
       },
+    };
+  }
+
+  /**
+   * Convert our JSON Schema to node-llama-cpp's expected format
+   */
+  private convertToNodeLlamaSchema(schema: any): any {
+    // node-llama-cpp expects a specific format
+    // Pass through most properties but ensure type is correct
+    if (!schema || typeof schema !== 'object') {
+      return { type: 'object', properties: {} };
+    }
+
+    return {
+      type: schema.type || 'object',
+      properties: schema.properties || {},
+      required: schema.required || [],
     };
   }
 
@@ -249,58 +339,7 @@ export class LocalLlamaProvider implements LLMProvider {
   }
 
   /**
-   * Build a system prompt that includes tool definitions for local models
-   */
-  private buildSystemPromptWithTools(basePrompt: string, tools: LLMTool[]): string {
-    if (tools.length === 0) {
-      return basePrompt;
-    }
-
-    const toolDescriptions = tools.map(tool => {
-      const params = tool.parameters as { properties?: Record<string, any>; required?: string[] };
-      const paramList = params.properties
-        ? Object.entries(params.properties).map(([name, schema]) => {
-            const required = params.required?.includes(name) ? ' (required)' : ' (optional)';
-            return `    - ${name}${required}: ${schema.description || schema.type || 'any'}`;
-          }).join('\n')
-        : '    (no parameters)';
-
-      return `### ${tool.name}
-${tool.description}
-Parameters:
-${paramList}`;
-    }).join('\n\n');
-
-    const toolInstructions = `
-## Available Tools
-
-You have access to the following tools to help complete your task. To use a tool, output a tool call in this EXACT format:
-
-<tool_call>
-{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
-</tool_call>
-
-You can make multiple tool calls in a single response. After each tool call, wait for the result before proceeding.
-
-IMPORTANT: You MUST use tools to complete tasks. Do not just describe what you would do - actually call the tools.
-
-${toolDescriptions}
-
-## Instructions
-
-1. Analyze the task and determine which tools you need
-2. Make tool calls using the exact format shown above
-3. Wait for tool results before making additional calls
-4. Continue until the task is complete
-
-Start by using a tool now:
-`;
-
-    return basePrompt + '\n\n' + toolInstructions;
-  }
-
-  /**
-   * Parse tool calls from the model's response text
+   * Parse tool calls from the model's response text (fallback for models without native support)
    */
   private parseToolCallsFromResponse(responseText: string, tools: LLMTool[]): LLMToolCall[] {
     const toolCalls: LLMToolCall[] = [];
@@ -322,22 +361,19 @@ Start by using a tool now:
             arguments: parsed.arguments || parsed.params || {},
           });
         }
-      } catch (e) {
-        // Failed to parse, try next match
-        console.warn('Failed to parse tool call:', match[1]);
+      } catch {
+        this.log('Failed to parse tool call:', match[1]);
       }
     }
 
-    // Pattern 2: ```tool\n{"name": "...", "arguments": {...}}\n```
+    // Pattern 2: ```json or ```tool blocks
     const codeBlockPattern = /```(?:tool|json)?\s*([\s\S]*?)\s*```/gi;
     while ((match = codeBlockPattern.exec(responseText)) !== null) {
       try {
         const jsonStr = match[1].trim();
-        // Check if it looks like a tool call
         if (jsonStr.includes('"name"') && (jsonStr.includes('"arguments"') || jsonStr.includes('"params"'))) {
           const parsed = JSON.parse(jsonStr);
           if (parsed.name && validToolNames.has(parsed.name)) {
-            // Avoid duplicates
             const exists = toolCalls.some(tc => tc.name === parsed.name &&
               JSON.stringify(tc.arguments) === JSON.stringify(parsed.arguments || parsed.params || {}));
             if (!exists) {
@@ -349,29 +385,26 @@ Start by using a tool now:
             }
           }
         }
-      } catch (e) {
-        // Not a valid tool call, skip
+      } catch {
+        // Not a valid tool call
       }
     }
 
-    // Pattern 3: Direct function call syntax - tool_name({"param": "value"})
-    for (const tool of tools) {
-      const funcPattern = new RegExp(`${tool.name}\\s*\\(\\s*({[\\s\\S]*?})\\s*\\)`, 'gi');
-      while ((match = funcPattern.exec(responseText)) !== null) {
-        try {
-          const args = JSON.parse(match[1]);
-          const exists = toolCalls.some(tc => tc.name === tool.name &&
-            JSON.stringify(tc.arguments) === JSON.stringify(args));
-          if (!exists) {
-            toolCalls.push({
-              id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-              name: tool.name,
-              arguments: args,
-            });
-          }
-        } catch (e) {
-          // Failed to parse arguments
+    // Pattern 3: Qwen native format - <|tool_call|> or similar
+    const qwenPattern = /<\|?(?:tool_call|function_call)\|?>\s*([\s\S]*?)\s*<\|?\/(?:tool_call|function_call)\|?>/gi;
+    while ((match = qwenPattern.exec(responseText)) !== null) {
+      try {
+        const jsonStr = match[1].trim();
+        const parsed = JSON.parse(jsonStr);
+        if (parsed.name && validToolNames.has(parsed.name)) {
+          toolCalls.push({
+            id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+            name: parsed.name,
+            arguments: parsed.arguments || parsed.params || {},
+          });
         }
+      } catch {
+        // Not valid JSON
       }
     }
 
@@ -383,16 +416,10 @@ Start by using a tool now:
    */
   private removeToolCallsFromResponse(responseText: string): string {
     let cleaned = responseText;
-
-    // Remove <tool_call>...</tool_call> blocks
     cleaned = cleaned.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '');
-
-    // Remove tool-related code blocks
+    cleaned = cleaned.replace(/<\|?(?:tool_call|function_call)\|?>[\s\S]*?<\|?\/(?:tool_call|function_call)\|?>/gi, '');
     cleaned = cleaned.replace(/```(?:tool|json)?\s*\{[\s\S]*?"name"[\s\S]*?\}\s*```/gi, '');
-
-    // Clean up extra whitespace
     cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
-
     return cleaned;
   }
 
@@ -440,6 +467,15 @@ Start by using a tool now:
   private reportProgress(phase: string, percent?: number, message?: string): void {
     if (this.progressCallback) {
       this.progressCallback({ phase, percent, message });
+    }
+  }
+
+  /**
+   * Log message if verbose mode is enabled
+   */
+  private log(...args: any[]): void {
+    if (this.verbose) {
+      console.log('[LocalLLM]', ...args);
     }
   }
 }

@@ -211,6 +211,7 @@ export interface CreateProviderOptions {
   gpuLayers?: number;
   contextSize?: number;
   threads?: number;
+  verbose?: boolean;
 
   // Ollama options
   ollamaHost?: string;
