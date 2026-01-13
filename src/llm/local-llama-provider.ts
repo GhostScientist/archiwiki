@@ -24,7 +24,6 @@ type LlamaModule = typeof import('node-llama-cpp');
 type LlamaType = Awaited<ReturnType<LlamaModule['getLlama']>>;
 type LlamaModelType = Awaited<ReturnType<LlamaType['loadModel']>>;
 type LlamaContextType = Awaited<ReturnType<LlamaModelType['createContext']>>;
-type LlamaChatSessionType = InstanceType<LlamaModule['LlamaChatSession']>;
 
 /**
  * Options for the LocalLlamaProvider
@@ -161,17 +160,17 @@ export class LocalLlamaProvider implements LLMProvider {
 
     const { LlamaChatSession } = await import('node-llama-cpp');
 
-    // Create a new chat session
+    // Build an enhanced system prompt that includes tool instructions
+    const enhancedSystemPrompt = this.buildSystemPromptWithTools(
+      options.systemPrompt || '',
+      tools
+    );
+
+    // Create a new chat session with enhanced system prompt
     const session = new LlamaChatSession({
       contextSequence: this.context.getSequence(),
-      systemPrompt: options.systemPrompt,
+      systemPrompt: enhancedSystemPrompt,
     });
-
-    // Build the conversation history
-    const conversationHistory = this.buildConversationHistory(messages);
-
-    // Convert tools to function definitions (pass session for tool call capture)
-    const functions = await this.convertToolsToFunctions(tools, session);
 
     // Get the last user message
     const lastUserMessage = this.getLastUserMessage(messages);
@@ -184,37 +183,19 @@ export class LocalLlamaProvider implements LLMProvider {
     let responseText = '';
 
     try {
-      // Prompt the model with function calling support
-      if (Object.keys(functions).length > 0) {
-        // With tools - tool calls are captured via the handlers in convertToolsToFunctions
-        responseText = await session.prompt(lastUserMessage, {
-          maxTokens: options.maxTokens,
-          temperature: options.temperature ?? 0.7,
-          functions,
-        });
+      // Prompt the model (tools are described in system prompt)
+      responseText = await session.prompt(lastUserMessage, {
+        maxTokens: options.maxTokens,
+        temperature: options.temperature ?? 0.7,
+      });
 
-        // Extract tool calls from the captured calls array
-        // (set during defineChatSessionFunction handlers)
-        const capturedCalls = (session as any).__toolCalls as Array<{
-          name: string;
-          params: Record<string, unknown>;
-        }> | undefined;
+      // Parse tool calls from the response text
+      const parsedToolCalls = this.parseToolCallsFromResponse(responseText, tools);
 
-        if (capturedCalls && capturedCalls.length > 0) {
-          for (const call of capturedCalls) {
-            toolCalls.push({
-              id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-              name: call.name,
-              arguments: call.params,
-            });
-          }
-        }
-      } else {
-        // Without tools
-        responseText = await session.prompt(lastUserMessage, {
-          maxTokens: options.maxTokens,
-          temperature: options.temperature ?? 0.7,
-        });
+      if (parsedToolCalls.length > 0) {
+        toolCalls.push(...parsedToolCalls);
+        // Remove tool call blocks from the response text for cleaner output
+        responseText = this.removeToolCallsFromResponse(responseText);
       }
     } catch (error) {
       const err = error as Error;
@@ -268,76 +249,151 @@ export class LocalLlamaProvider implements LLMProvider {
   }
 
   /**
-   * Convert LLM tools to node-llama-cpp function format
-   * The session object is used to store captured tool calls
+   * Build a system prompt that includes tool definitions for local models
    */
-  private async convertToolsToFunctions(
-    tools: LLMTool[],
-    session: LlamaChatSessionType
-  ): Promise<Record<string, ReturnType<LlamaModule['defineChatSessionFunction']>>> {
-    const { defineChatSessionFunction } = await import('node-llama-cpp');
-    const functions: Record<string, ReturnType<typeof defineChatSessionFunction>> = {};
-
-    // Initialize tool calls array on session
-    (session as any).__toolCalls = [];
-
-    for (const tool of tools) {
-      const toolName = tool.name;
-      functions[toolName] = defineChatSessionFunction({
-        description: tool.description,
-        params: tool.parameters as any,
-        handler: async (params) => {
-          // Capture the tool call for later processing
-          (session as any).__toolCalls.push({
-            name: toolName,
-            params: (params ?? {}) as Record<string, unknown>,
-          });
-          // Return a placeholder - actual execution happens in the main loop
-          return { _pending: true, message: 'Tool execution pending' };
-        },
-      });
+  private buildSystemPromptWithTools(basePrompt: string, tools: LLMTool[]): string {
+    if (tools.length === 0) {
+      return basePrompt;
     }
 
-    return functions;
+    const toolDescriptions = tools.map(tool => {
+      const params = tool.parameters as { properties?: Record<string, any>; required?: string[] };
+      const paramList = params.properties
+        ? Object.entries(params.properties).map(([name, schema]) => {
+            const required = params.required?.includes(name) ? ' (required)' : ' (optional)';
+            return `    - ${name}${required}: ${schema.description || schema.type || 'any'}`;
+          }).join('\n')
+        : '    (no parameters)';
+
+      return `### ${tool.name}
+${tool.description}
+Parameters:
+${paramList}`;
+    }).join('\n\n');
+
+    const toolInstructions = `
+## Available Tools
+
+You have access to the following tools to help complete your task. To use a tool, output a tool call in this EXACT format:
+
+<tool_call>
+{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}
+</tool_call>
+
+You can make multiple tool calls in a single response. After each tool call, wait for the result before proceeding.
+
+IMPORTANT: You MUST use tools to complete tasks. Do not just describe what you would do - actually call the tools.
+
+${toolDescriptions}
+
+## Instructions
+
+1. Analyze the task and determine which tools you need
+2. Make tool calls using the exact format shown above
+3. Wait for tool results before making additional calls
+4. Continue until the task is complete
+
+Start by using a tool now:
+`;
+
+    return basePrompt + '\n\n' + toolInstructions;
   }
 
   /**
-   * Build conversation history for the session
+   * Parse tool calls from the model's response text
    */
-  private buildConversationHistory(
-    messages: LLMMessage[]
-  ): Array<{ role: 'user' | 'assistant'; content: string }> {
-    const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  private parseToolCallsFromResponse(responseText: string, tools: LLMTool[]): LLMToolCall[] {
+    const toolCalls: LLMToolCall[] = [];
+    const validToolNames = new Set(tools.map(t => t.name));
 
-    for (const msg of messages) {
-      if (msg.role === 'user' || msg.role === 'assistant') {
-        const content =
-          typeof msg.content === 'string'
-            ? msg.content
-            : msg.content
-                .filter((c) => c.type === 'text')
-                .map((c) => (c as { type: 'text'; text: string }).text)
-                .join('\n');
+    // Pattern 1: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+    const toolCallPattern = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi;
+    let match;
 
-        if (content) {
-          history.push({
-            role: msg.role,
-            content,
+    while ((match = toolCallPattern.exec(responseText)) !== null) {
+      try {
+        const jsonStr = match[1].trim();
+        const parsed = JSON.parse(jsonStr);
+
+        if (parsed.name && validToolNames.has(parsed.name)) {
+          toolCalls.push({
+            id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+            name: parsed.name,
+            arguments: parsed.arguments || parsed.params || {},
           });
         }
-      } else if (msg.role === 'tool') {
-        // Append tool results to the last assistant message or create a new user message
-        const content =
-          typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-
-        history.push({
-          role: 'user',
-          content: `Tool result for ${msg.name || 'unknown'}: ${content}`,
-        });
+      } catch (e) {
+        // Failed to parse, try next match
+        console.warn('Failed to parse tool call:', match[1]);
       }
     }
 
-    return history;
+    // Pattern 2: ```tool\n{"name": "...", "arguments": {...}}\n```
+    const codeBlockPattern = /```(?:tool|json)?\s*([\s\S]*?)\s*```/gi;
+    while ((match = codeBlockPattern.exec(responseText)) !== null) {
+      try {
+        const jsonStr = match[1].trim();
+        // Check if it looks like a tool call
+        if (jsonStr.includes('"name"') && (jsonStr.includes('"arguments"') || jsonStr.includes('"params"'))) {
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.name && validToolNames.has(parsed.name)) {
+            // Avoid duplicates
+            const exists = toolCalls.some(tc => tc.name === parsed.name &&
+              JSON.stringify(tc.arguments) === JSON.stringify(parsed.arguments || parsed.params || {}));
+            if (!exists) {
+              toolCalls.push({
+                id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+                name: parsed.name,
+                arguments: parsed.arguments || parsed.params || {},
+              });
+            }
+          }
+        }
+      } catch (e) {
+        // Not a valid tool call, skip
+      }
+    }
+
+    // Pattern 3: Direct function call syntax - tool_name({"param": "value"})
+    for (const tool of tools) {
+      const funcPattern = new RegExp(`${tool.name}\\s*\\(\\s*({[\\s\\S]*?})\\s*\\)`, 'gi');
+      while ((match = funcPattern.exec(responseText)) !== null) {
+        try {
+          const args = JSON.parse(match[1]);
+          const exists = toolCalls.some(tc => tc.name === tool.name &&
+            JSON.stringify(tc.arguments) === JSON.stringify(args));
+          if (!exists) {
+            toolCalls.push({
+              id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+              name: tool.name,
+              arguments: args,
+            });
+          }
+        } catch (e) {
+          // Failed to parse arguments
+        }
+      }
+    }
+
+    return toolCalls;
+  }
+
+  /**
+   * Remove tool call blocks from response text
+   */
+  private removeToolCallsFromResponse(responseText: string): string {
+    let cleaned = responseText;
+
+    // Remove <tool_call>...</tool_call> blocks
+    cleaned = cleaned.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '');
+
+    // Remove tool-related code blocks
+    cleaned = cleaned.replace(/```(?:tool|json)?\s*\{[\s\S]*?"name"[\s\S]*?\}\s*```/gi, '');
+
+    // Clean up extra whitespace
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+
+    return cleaned;
   }
 
   /**
