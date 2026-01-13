@@ -10,7 +10,7 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import inquirerAutocomplete from 'inquirer-autocomplete-prompt';
 import { DevelopmentAgentAgent } from './agent.js';
-import { ArchitecturalWikiAgent, type ProgressEvent, type GenerationEstimate } from './wiki-agent.js';
+import { ArchitecturalWikiAgent, type ProgressEvent, type GenerationEstimate, type LocalGenerationEstimate } from './wiki-agent.js';
 import { SiteGenerator } from './site-generator.js';
 import { ConfigManager } from './config.js';
 import { PermissionManager, type PermissionPolicy } from './permissions.js';
@@ -136,35 +136,100 @@ program
         const spinner = ora('Analyzing repository...').start();
 
         try {
-          const estimate = await agent.estimateGeneration({
-            repoUrl: options.repo,
-            outputDir: options.output,
-            accessToken: options.token || process.env.GITHUB_TOKEN
-          });
+          let estimate: GenerationEstimate | LocalGenerationEstimate;
+
+          if (options.fullLocal) {
+            spinner.text = 'Analyzing repository and detecting hardware...';
+            estimate = await agent.estimateLocalGeneration({
+              repoUrl: options.repo,
+              outputDir: options.output,
+              accessToken: options.token || process.env.GITHUB_TOKEN
+            });
+          } else {
+            estimate = await agent.estimateGeneration({
+              repoUrl: options.repo,
+              outputDir: options.output,
+              accessToken: options.token || process.env.GITHUB_TOKEN
+            });
+          }
 
           spinner.succeed('Analysis complete');
           console.log();
 
-          // Display estimate
-          console.log(chalk.cyan.bold('📊 Generation Estimate\n'));
+          // Display estimate header
+          if (options.fullLocal) {
+            console.log(chalk.cyan.bold('📊 Local Mode Generation Estimate\n'));
+          } else {
+            console.log(chalk.cyan.bold('📊 Generation Estimate\n'));
+          }
 
+          // Basic stats
           console.log(chalk.white('Files to process:'), chalk.yellow(estimate.files.toString()));
           console.log(chalk.white('Estimated chunks:'), chalk.yellow(estimate.estimatedChunks.toString()));
           console.log(chalk.white('Estimated tokens:'), chalk.yellow(estimate.estimatedTokens.toLocaleString()));
           console.log();
 
-          console.log(chalk.white.bold('⏱️  Estimated Time'));
-          console.log(chalk.gray('  Indexing:'), chalk.yellow(`${estimate.estimatedTime.indexingMinutes} min`));
-          console.log(chalk.gray('  Generation:'), chalk.yellow(`${estimate.estimatedTime.generationMinutes} min`));
-          console.log(chalk.gray('  Total:'), chalk.green.bold(`~${estimate.estimatedTime.totalMinutes} min`));
-          console.log();
+          // Local mode specific info
+          if (options.fullLocal && 'hardware' in estimate) {
+            const localEst = estimate as LocalGenerationEstimate;
 
-          console.log(chalk.white.bold('💰 Estimated Cost (Claude Sonnet)'));
-          console.log(chalk.gray('  Input tokens:'), chalk.yellow(`$${estimate.estimatedCost.input.toFixed(2)}`));
-          console.log(chalk.gray('  Output tokens:'), chalk.yellow(`$${estimate.estimatedCost.output.toFixed(2)}`));
-          console.log(chalk.gray('  Total:'), chalk.green.bold(`$${estimate.estimatedCost.total.toFixed(2)}`));
-          console.log();
+            console.log(chalk.white.bold('🖥️  Detected Hardware'));
+            if (localEst.hardware.gpuName) {
+              console.log(chalk.gray('  GPU:'), chalk.yellow(localEst.hardware.gpuName));
+            } else {
+              console.log(chalk.gray('  GPU:'), chalk.yellow(localEst.hardware.gpuVendor === 'none' ? 'None (CPU mode)' : `${localEst.hardware.gpuVendor}`));
+            }
+            console.log(chalk.gray('  VRAM:'), chalk.yellow(`${localEst.hardware.gpuVram} GB`));
+            console.log(chalk.gray('  RAM:'), chalk.yellow(`${localEst.hardware.systemRam} GB`));
+            console.log(chalk.gray('  CPU Cores:'), chalk.yellow(localEst.hardware.cpuCores.toString()));
+            console.log();
 
+            console.log(chalk.white.bold('🤖 Recommended Model'));
+            console.log(chalk.gray('  Model:'), chalk.yellow(localEst.recommendedModel.modelId));
+            console.log(chalk.gray('  Quality:'), chalk.yellow(localEst.recommendedModel.quality));
+            console.log(chalk.gray('  Size:'), chalk.yellow(`${localEst.recommendedModel.fileSizeGb} GB`));
+            console.log(chalk.gray('  Context:'), chalk.yellow(`${localEst.recommendedModel.contextLength.toLocaleString()} tokens`));
+            console.log(chalk.gray('  Status:'), localEst.recommendedModel.downloaded
+              ? chalk.green('✓ Downloaded')
+              : chalk.yellow('⬇ Download required'));
+            console.log();
+
+            console.log(chalk.white.bold('⏱️  Estimated Time'));
+            console.log(chalk.gray('  Indexing:'), chalk.yellow(`${localEst.estimatedTime.indexingMinutes} min`));
+            console.log(chalk.gray('  Generation:'), chalk.yellow(`${localEst.localEstimate.generationMinutes} min`));
+            console.log(chalk.gray('  Est. speed:'), chalk.yellow(`~${localEst.localEstimate.tokensPerSecond} tokens/sec`));
+            console.log(chalk.gray('  Total:'), chalk.green.bold(`~${localEst.estimatedTime.totalMinutes} min`));
+            console.log();
+
+            console.log(chalk.white.bold('💾 Disk Space'));
+            console.log(chalk.gray('  Model:'), chalk.yellow(`${localEst.recommendedModel.fileSizeGb} GB`));
+            console.log(chalk.gray('  Cache:'), chalk.yellow(`~${(localEst.localEstimate.diskSpaceRequired - localEst.recommendedModel.fileSizeGb).toFixed(1)} GB`));
+            console.log(chalk.gray('  Total:'), chalk.yellow(`${localEst.localEstimate.diskSpaceRequired} GB`));
+            if (localEst.localEstimate.downloadRequired) {
+              console.log(chalk.gray('  Download:'), chalk.yellow(`${localEst.localEstimate.downloadSizeGb} GB (one-time)`));
+            }
+            console.log();
+
+            console.log(chalk.white.bold('💰 Cost'));
+            console.log(chalk.green.bold('  FREE'), chalk.gray('- Local inference, no API charges'));
+            console.log();
+
+          } else {
+            // Cloud mode estimates
+            console.log(chalk.white.bold('⏱️  Estimated Time'));
+            console.log(chalk.gray('  Indexing:'), chalk.yellow(`${estimate.estimatedTime.indexingMinutes} min`));
+            console.log(chalk.gray('  Generation:'), chalk.yellow(`${estimate.estimatedTime.generationMinutes} min`));
+            console.log(chalk.gray('  Total:'), chalk.green.bold(`~${estimate.estimatedTime.totalMinutes} min`));
+            console.log();
+
+            console.log(chalk.white.bold('💰 Estimated Cost (Claude Sonnet)'));
+            console.log(chalk.gray('  Input tokens:'), chalk.yellow(`$${estimate.estimatedCost.input.toFixed(2)}`));
+            console.log(chalk.gray('  Output tokens:'), chalk.yellow(`$${estimate.estimatedCost.output.toFixed(2)}`));
+            console.log(chalk.gray('  Total:'), chalk.green.bold(`$${estimate.estimatedCost.total.toFixed(2)}`));
+            console.log();
+          }
+
+          // File breakdown (common to both modes)
           console.log(chalk.white.bold('📁 Files by Type'));
           const sortedExts = Object.entries(estimate.breakdown.byExtension)
             .sort(([, a], [, b]) => b - a)
@@ -183,7 +248,18 @@ program
             console.log();
           }
 
-          console.log(chalk.gray('Run without --estimate to start generation.\n'));
+          // Helpful next steps
+          if (options.fullLocal) {
+            console.log(chalk.gray('Run without --estimate to start local generation.\n'));
+            if ('localEstimate' in estimate && estimate.localEstimate.downloadRequired) {
+              console.log(chalk.yellow('Note: First run will download the model (~' +
+                estimate.localEstimate.downloadSizeGb + ' GB). This is a one-time download.\n'));
+            }
+          } else {
+            console.log(chalk.gray('Run without --estimate to start generation.\n'));
+            console.log(chalk.gray('Tip: Use --full-local for free local inference (no API costs).\n'));
+          }
+
         } catch (error) {
           spinner.fail('Analysis failed');
           throw error;

@@ -124,6 +124,32 @@ export interface GenerationEstimate {
   };
 }
 
+export interface LocalGenerationEstimate extends GenerationEstimate {
+  isLocal: true;
+  hardware: {
+    gpuVendor: string;
+    gpuName?: string;
+    gpuVram: number;
+    systemRam: number;
+    cpuCores: number;
+  };
+  recommendedModel: {
+    modelId: string;
+    quality: string;
+    fileSizeGb: number;
+    contextLength: number;
+    minVram: number;
+    downloaded: boolean;
+  };
+  localEstimate: {
+    tokensPerSecond: number;
+    generationMinutes: number;
+    downloadRequired: boolean;
+    downloadSizeGb: number;
+    diskSpaceRequired: number;
+  };
+}
+
 export class ArchitecturalWikiAgent {
   private config: WikiAgentConfig;
   private permissionManager: PermissionManager;
@@ -1477,6 +1503,95 @@ Create all ${missingPages.length} missing pages now.`;
           Object.entries(byExtension).filter(([, count]) => count > 0)
         ),
         largestFiles
+      }
+    };
+  }
+
+  /**
+   * Estimate generation for local mode - includes hardware detection and model recommendation
+   */
+  async estimateLocalGeneration(options: WikiGenerationOptions): Promise<LocalGenerationEstimate> {
+    // Get base estimates
+    const baseEstimate = await this.estimateGeneration(options);
+
+    // Import model manager for hardware detection
+    const { ModelManager } = await import('./llm/model-manager.js');
+    const modelManager = new ModelManager();
+
+    // Detect hardware
+    const hardware = await modelManager.detectHardware();
+
+    // Get recommended model
+    const recommendation = modelManager.recommendModel(hardware);
+
+    // Check if model is already downloaded
+    const downloadedModels = modelManager.listDownloadedModels();
+    const isDownloaded = downloadedModels.some(m => m.model.modelId === recommendation.modelId);
+
+    // Estimate tokens per second based on hardware
+    // These are rough estimates based on typical performance
+    let tokensPerSecond: number;
+    if (hardware.gpuVram >= 24) {
+      tokensPerSecond = 40; // High-end GPU
+    } else if (hardware.gpuVram >= 16) {
+      tokensPerSecond = 30; // Mid-range GPU
+    } else if (hardware.gpuVram >= 8) {
+      tokensPerSecond = 20; // Lower GPU
+    } else if (hardware.gpuVendor === 'apple') {
+      // Apple Silicon - estimate based on unified memory
+      tokensPerSecond = Math.min(35, 15 + (hardware.systemRam / 4));
+    } else {
+      // CPU-only or low VRAM
+      tokensPerSecond = 5;
+    }
+
+    // Estimate generation time for local mode
+    // Local models are slower but don't have API latency
+    const tokensNeeded = baseEstimate.estimatedTokens * 2.5; // Input + output
+    const generationSeconds = tokensNeeded / tokensPerSecond;
+    const localGenerationMinutes = Math.round((generationSeconds / 60) * 10) / 10;
+
+    // Calculate disk space needed
+    const modelSizeGb = recommendation.fileSizeBytes / 1e9;
+    const cacheSpaceGb = baseEstimate.estimatedChunks * 0.001; // ~1KB per chunk for embeddings
+    const diskSpaceRequired = Math.round((modelSizeGb + cacheSpaceGb) * 10) / 10;
+
+    return {
+      ...baseEstimate,
+      isLocal: true,
+      // Override cost - local mode is free
+      estimatedCost: {
+        input: 0,
+        output: 0,
+        total: 0
+      },
+      // Override time estimates for local
+      estimatedTime: {
+        indexingMinutes: baseEstimate.estimatedTime.indexingMinutes,
+        generationMinutes: localGenerationMinutes,
+        totalMinutes: Math.round((baseEstimate.estimatedTime.indexingMinutes + localGenerationMinutes) * 10) / 10
+      },
+      hardware: {
+        gpuVendor: hardware.gpuVendor,
+        gpuName: hardware.gpuName,
+        gpuVram: hardware.gpuVram,
+        systemRam: hardware.systemRam,
+        cpuCores: hardware.cpuCores
+      },
+      recommendedModel: {
+        modelId: recommendation.modelId,
+        quality: recommendation.quality,
+        fileSizeGb: Math.round(modelSizeGb * 10) / 10,
+        contextLength: recommendation.contextLength,
+        minVram: recommendation.minVram,
+        downloaded: isDownloaded
+      },
+      localEstimate: {
+        tokensPerSecond,
+        generationMinutes: localGenerationMinutes,
+        downloadRequired: !isDownloaded,
+        downloadSizeGb: isDownloaded ? 0 : Math.round(modelSizeGb * 10) / 10,
+        diskSpaceRequired
       }
     };
   }
