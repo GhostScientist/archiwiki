@@ -41,6 +41,7 @@ export async function createLLMProvider(options: CreateProviderOptions = {}): Pr
   console.log('[createLLMProvider] Options:', {
     fullLocal: options.fullLocal,
     useOllama: options.useOllama,
+    modelFamily: options.modelFamily,
     verbose: options.verbose,
     localModel: options.localModel
   });
@@ -57,17 +58,19 @@ export async function createLLMProvider(options: CreateProviderOptions = {}): Pr
       console.log('[createLLMProvider] Created OllamaProvider');
     } else {
       // Use bundled node-llama-cpp (default for --full-local)
-      console.log('🏠 Using self-contained local mode...\n');
+      const familyName = options.modelFamily === 'qwen' ? 'Qwen' : 'LFM (LiquidAI)';
+      console.log(`🏠 Using self-contained local mode with ${familyName} models...\n`);
       provider = new LocalLlamaProvider({
         modelPath: options.modelPath,
         modelId: options.localModel,
+        modelFamily: options.modelFamily || 'lfm', // Default to LFM for better tool calling
         gpuLayers: options.gpuLayers,
         contextSize: options.contextSize,
         threads: options.threads,
         onProgress: options.onProgress,
         verbose: options.verbose,
       });
-      console.log('[createLLMProvider] Created LocalLlamaProvider with verbose:', options.verbose);
+      console.log('[createLLMProvider] Created LocalLlamaProvider with family:', options.modelFamily || 'lfm');
     }
   } else {
     // Use cloud Anthropic API

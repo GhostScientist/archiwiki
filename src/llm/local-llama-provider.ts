@@ -1,12 +1,11 @@
 /**
  * Local Llama Provider
  *
- * Self-contained local LLM inference using node-llama-cpp.
- * Handles model loading, hardware detection, and tool calling.
+ * LLM provider that runs models locally using node-llama-cpp.
+ * Uses a simple prompt-based approach for tool calling that works with any model.
  */
 
 import * as path from 'path';
-import { ModelManager } from './model-manager.js';
 import type {
   LLMProvider,
   LLMMessage,
@@ -16,28 +15,24 @@ import type {
   LLMProviderOptions,
   ModelInfo,
   ProgressCallback,
-  HardwareProfile,
 } from './types.js';
-
-// Dynamic imports for node-llama-cpp types
-type LlamaModule = typeof import('node-llama-cpp');
-type LlamaType = Awaited<ReturnType<LlamaModule['getLlama']>>;
-type LlamaModelType = Awaited<ReturnType<LlamaType['loadModel']>>;
-type LlamaContextType = Awaited<ReturnType<LlamaModelType['createContext']>>;
+import { ModelManager, type ModelFamily } from './model-manager.js';
 
 /**
- * Options for the LocalLlamaProvider
+ * Options for LocalLlamaProvider
  */
 export interface LocalLlamaProviderOptions {
-  /** Explicit path to a GGUF model file */
+  /** Path to a local GGUF model file (overrides auto-selection) */
   modelPath?: string;
-  /** Model ID from the registry to use */
+  /** Specific model ID to use from the registry */
   modelId?: string;
-  /** Number of layers to offload to GPU (default: auto) */
+  /** Model family to prefer ('lfm' or 'qwen') */
+  modelFamily?: ModelFamily;
+  /** Number of GPU layers to offload (-1 = auto, 0 = CPU only) */
   gpuLayers?: number;
-  /** Context window size (default: 32768) */
+  /** Context window size */
   contextSize?: number;
-  /** Number of CPU threads to use (default: auto) */
+  /** Number of CPU threads to use */
   threads?: number;
   /** Progress callback for status updates */
   onProgress?: ProgressCallback;
@@ -46,43 +41,39 @@ export interface LocalLlamaProviderOptions {
 }
 
 /**
- * LocalLlamaProvider - Self-contained local LLM inference
+ * LocalLlamaProvider - Run LLMs locally using node-llama-cpp
  *
- * Uses node-llama-cpp for in-process inference without requiring
- * external servers like Ollama.
+ * Uses a prompt-based approach for tool calling that works reliably
+ * with any instruction-tuned model (LFM2.5, Qwen, etc.)
  */
 export class LocalLlamaProvider implements LLMProvider {
-  private options: LocalLlamaProviderOptions;
+  private llama: any = null;
+  private model: any = null;
+  private context: any = null;
   private modelManager: ModelManager;
+  private options: LocalLlamaProviderOptions;
   private progressCallback?: ProgressCallback;
-  private verbose: boolean = false;
-
-  // node-llama-cpp instances (set after initialization)
-  private llama: LlamaType | null = null;
-  private model: LlamaModelType | null = null;
-  private context: LlamaContextType | null = null;
+  private verbose: boolean;
+  private modelInfo: ModelInfo | null = null;
+  private modelFamily: ModelFamily = 'lfm'; // Default to LFM for better tool calling
   private modelPath: string = '';
-  private hardware: HardwareProfile | null = null;
-
-  // Tool execution callback - set by the wiki agent
-  private toolExecutor?: (name: string, args: Record<string, unknown>) => Promise<string>;
 
   constructor(options: LocalLlamaProviderOptions = {}) {
     this.options = options;
     this.modelManager = new ModelManager();
     this.progressCallback = options.onProgress;
     this.verbose = options.verbose ?? false;
+    this.modelFamily = options.modelFamily || 'lfm';
+  }
+
+  private log(...args: any[]): void {
+    if (this.verbose) {
+      console.log('[LocalLLM]', ...args);
+    }
   }
 
   /**
-   * Set a callback for executing tools during inference
-   */
-  setToolExecutor(executor: (name: string, args: Record<string, unknown>) => Promise<string>): void {
-    this.toolExecutor = executor;
-  }
-
-  /**
-   * Set a progress callback for status updates
+   * Set a progress callback
    */
   setProgressCallback(callback: ProgressCallback): void {
     this.progressCallback = callback;
@@ -90,205 +81,358 @@ export class LocalLlamaProvider implements LLMProvider {
   }
 
   /**
-   * Initialize the provider - detect hardware, download model if needed, load model
+   * Initialize the provider - detect hardware, select model, load it
    */
   async initialize(): Promise<void> {
-    this.reportProgress('initializing', undefined, 'Detecting hardware...');
+    console.log('🔧 Initializing local LLM provider...\n');
 
     // Detect hardware
-    console.log('🔍 Detecting hardware...');
-    this.hardware = await this.modelManager.detectHardware();
+    const hardware = await this.modelManager.detectHardware();
+    console.log('📊 Hardware detected:');
+    console.log(this.modelManager.formatHardwareProfile(hardware));
+    console.log();
 
-    console.log(`   ├─ ${this.formatGpuInfo()}`);
-    console.log(`   ├─ RAM: ${this.hardware.systemRam.toFixed(0)} GB available`);
-    console.log(`   └─ CPU: ${this.hardware.cpuCores} cores`);
+    // Determine model to use
+    let modelId: string;
+    let contextLength: number;
 
-    // Determine which model to use
     if (this.options.modelPath) {
-      // Explicit path provided
+      // User specified a custom model path
       this.modelPath = this.options.modelPath;
-      console.log(`\n📦 Using specified model: ${path.basename(this.modelPath)}`);
-    } else if (this.options.modelId) {
-      // Specific model ID requested
-      const model = this.modelManager.getModelById(this.options.modelId);
-      if (!model) {
-        throw new Error(`Unknown model ID: ${this.options.modelId}`);
-      }
-      console.log(`\n📦 Requested model: ${model.modelId}`);
-      this.modelPath = await this.modelManager.ensureModel(model);
+      modelId = 'custom';
+      contextLength = this.options.contextSize || 32768;
+      console.log(`📦 Using custom model: ${this.modelPath}\n`);
     } else {
-      // Auto-select based on hardware
-      const recommendation = this.modelManager.recommendModel(this.hardware);
-      console.log(`   └─ Recommended: ${recommendation.modelId} (${recommendation.quality} quality)`);
-      this.modelPath = await this.modelManager.ensureModel(recommendation);
+      // Auto-select or use specified model
+      let model;
+      if (this.options.modelId) {
+        model = this.modelManager.getModelById(this.options.modelId);
+        if (!model) {
+          throw new Error(`Model not found: ${this.options.modelId}`);
+        }
+      } else {
+        // Recommend best model for hardware, preferring the specified family
+        model = this.modelManager.recommendModel(hardware, this.modelFamily);
+      }
+
+      modelId = model.modelId;
+      contextLength = model.contextLength;
+      const sizeGB = (model.fileSizeBytes / 1e9).toFixed(1);
+
+      console.log(`🎯 Selected model: ${model.modelId} (${sizeGB} GB)`);
+      console.log(`   Quality: ${model.quality}`);
+      console.log(`   Context: ${model.contextLength.toLocaleString()} tokens\n`);
+
+      // Ensure model is downloaded
+      this.modelPath = await this.modelManager.ensureModel(model);
     }
 
-    // Load the model
-    this.reportProgress('loading', undefined, 'Loading model...');
-    console.log('\n⏳ Loading model into memory...');
+    // Load the model using node-llama-cpp
+    console.log('⏳ Loading model into memory...');
 
     try {
       const { getLlama } = await import('node-llama-cpp');
+
       this.llama = await getLlama();
 
-      // Load model with configuration
+      // Load the model
       this.model = await this.llama.loadModel({
         modelPath: this.modelPath,
-        gpuLayers: this.options.gpuLayers, // undefined = auto
+        gpuLayers: this.options.gpuLayers ?? -1, // Auto-detect
       });
 
       // Create context
-      const contextSize = this.options.contextSize ?? 32768;
       this.context = await this.model.createContext({
-        contextSize,
+        contextSize: Math.min(this.options.contextSize || contextLength, contextLength),
+        threads: this.options.threads,
       });
 
+      this.modelInfo = {
+        name: modelId,
+        contextLength: this.context.contextSize,
+        supportsTools: true,
+        supportsStreaming: false,
+        isLocal: true,
+      };
+
       console.log('✅ Model loaded and ready!\n');
-      this.reportProgress('ready', 100, 'Model ready');
     } catch (error) {
       const err = error as Error;
-      if (err.message?.includes('out of memory') || err.message?.includes('OOM')) {
-        throw new Error(
-          `Out of memory while loading model.\n\n` +
-            `Try:\n` +
-            `  1. Reduce context size: --context-size 16384\n` +
-            `  2. Use fewer GPU layers: --gpu-layers 20\n` +
-            `  3. Use a smaller model: --local-model qwen2.5-coder-7b-q5`
-        );
-      }
-      throw error;
+      throw new Error(`Failed to load local model: ${err.message}`);
     }
   }
 
   /**
-   * Send a chat completion request using node-llama-cpp's native function calling
+   * Build a system prompt that includes tool definitions
+   */
+  private buildToolPrompt(tools: LLMTool[]): string {
+    if (tools.length === 0) {
+      return '';
+    }
+
+    const toolDescriptions = tools.map((t) => {
+      const params = t.parameters?.properties
+        ? Object.entries(t.parameters.properties as Record<string, any>)
+            .map(([name, schema]: [string, any]) => {
+              const required = (t.parameters?.required as string[] || []).includes(name);
+              return `    - ${name}${required ? ' (required)' : ''}: ${schema.description || schema.type || 'any'}`;
+            })
+            .join('\n')
+        : '    (no parameters)';
+
+      return `- ${t.name}: ${t.description}\n  Parameters:\n${params}`;
+    }).join('\n\n');
+
+    return `
+## Available Tools
+
+You have access to the following tools. To use a tool, output a JSON object on its own line in this exact format:
+
+{"tool": "tool_name", "args": {"param1": "value1", "param2": "value2"}}
+
+Available tools:
+
+${toolDescriptions}
+
+IMPORTANT RULES:
+1. Output tool calls as valid JSON on a SINGLE LINE
+2. You can make multiple tool calls by outputting multiple JSON lines
+3. After a tool result is provided, analyze it and continue with your task
+4. When you have completed the task and need no more tools, write your final response
+5. DO NOT wrap tool calls in markdown code blocks - just output raw JSON
+`;
+  }
+
+  /**
+   * Parse tool calls from model response
+   */
+  private parseToolCalls(response: string, tools: LLMTool[]): LLMToolCall[] {
+    const toolCalls: LLMToolCall[] = [];
+    const toolNames = new Set(tools.map((t) => t.name));
+
+    // Match JSON objects that look like tool calls
+    // Try multiple patterns
+
+    // Pattern 1: Simple {"tool": "...", "args": {...}} on its own line
+    const lines = response.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('{') && trimmed.includes('"tool"')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed.tool && toolNames.has(parsed.tool)) {
+            toolCalls.push({
+              id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              name: parsed.tool,
+              arguments: parsed.args || parsed.arguments || {},
+            });
+            this.log('Parsed tool call:', parsed.tool);
+          }
+        } catch {
+          // Not valid JSON, skip
+        }
+      }
+    }
+
+    // Pattern 2: JSON in code blocks
+    const codeBlockPattern = /```(?:json)?\s*(\{[\s\S]*?\})\s*```/g;
+    let match;
+    while ((match = codeBlockPattern.exec(response)) !== null) {
+      try {
+        const parsed = JSON.parse(match[1]);
+        if (parsed.tool && toolNames.has(parsed.tool)) {
+          // Check if already captured
+          const exists = toolCalls.some(tc =>
+            tc.name === parsed.tool &&
+            JSON.stringify(tc.arguments) === JSON.stringify(parsed.args || parsed.arguments || {})
+          );
+          if (!exists) {
+            toolCalls.push({
+              id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              name: parsed.tool,
+              arguments: parsed.args || parsed.arguments || {},
+            });
+            this.log('Parsed tool call from code block:', parsed.tool);
+          }
+        }
+      } catch {
+        // Not valid JSON, skip
+      }
+    }
+
+    // Pattern 3: LFM2.5's native format: <|tool_call_start|>[...]<|tool_call_end|>
+    const lfmPattern = /<\|tool_call_start\|>([\s\S]*?)<\|tool_call_end\|>/g;
+    while ((match = lfmPattern.exec(response)) !== null) {
+      try {
+        // LFM2.5 outputs Python-style function calls
+        const callText = match[1].trim();
+        // Parse: [tool_name(arg1="val1", arg2="val2")]
+        const funcMatch = callText.match(/\[?(\w+)\((.*)\)\]?/s);
+        if (funcMatch && toolNames.has(funcMatch[1])) {
+          const args: Record<string, unknown> = {};
+          const argsText = funcMatch[2];
+          // Parse kwargs
+          const argPattern = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g;
+          let argMatch;
+          while ((argMatch = argPattern.exec(argsText)) !== null) {
+            args[argMatch[1]] = argMatch[2] ?? argMatch[3] ?? argMatch[4];
+          }
+          toolCalls.push({
+            id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            name: funcMatch[1],
+            arguments: args,
+          });
+          this.log('Parsed LFM tool call:', funcMatch[1]);
+        }
+      } catch {
+        // Parsing failed, skip
+      }
+    }
+
+    return toolCalls;
+  }
+
+  /**
+   * Remove tool call JSON from response text
+   */
+  private cleanResponse(response: string, toolCalls: LLMToolCall[]): string {
+    let cleaned = response;
+
+    // Remove lines that are just tool call JSON
+    const lines = cleaned.split('\n');
+    const filteredLines = lines.filter(line => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('{') && trimmed.includes('"tool"')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          // If this was parsed as a tool call, remove it
+          return !toolCalls.some(tc => tc.name === parsed.tool);
+        } catch {
+          return true;
+        }
+      }
+      return true;
+    });
+    cleaned = filteredLines.join('\n');
+
+    // Remove JSON in code blocks that were tool calls
+    cleaned = cleaned.replace(/```(?:json)?\s*\{[^}]*"tool"[^}]*\}\s*```/g, '');
+
+    // Remove LFM2.5 tool call markers
+    cleaned = cleaned.replace(/<\|tool_call_start\|>[\s\S]*?<\|tool_call_end\|>/g, '');
+
+    // Clean up extra whitespace
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+
+    return cleaned;
+  }
+
+  /**
+   * Send a chat completion request
    */
   async chat(
     messages: LLMMessage[],
     tools: LLMTool[],
     options: LLMProviderOptions
   ): Promise<LLMResponse> {
-    // Always log entry to chat() for debugging
     console.log('[LocalLLM] chat() called with', messages.length, 'messages,', tools.length, 'tools');
-    console.log('[LocalLLM] verbose mode:', this.verbose);
 
     if (!this.context || !this.model || !this.llama) {
-      console.log('[LocalLLM] ERROR: Provider not initialized!');
       throw new Error('Provider not initialized. Call initialize() first.');
     }
 
-    console.log('[LocalLLM] Context and model are available, loading node-llama-cpp...');
-    const { LlamaChatSession, defineChatSessionFunction } = await import('node-llama-cpp');
-    console.log('[LocalLLM] node-llama-cpp imported successfully');
+    const { LlamaChatSession } = await import('node-llama-cpp');
+
+    // Build system prompt with tool definitions
+    const toolPrompt = this.buildToolPrompt(tools);
+    const fullSystemPrompt = options.systemPrompt
+      ? `${options.systemPrompt}\n\n${toolPrompt}`
+      : toolPrompt;
+
+    this.log('System prompt length:', fullSystemPrompt.length, 'chars');
 
     // Create a new chat session
     const session = new LlamaChatSession({
       contextSequence: this.context.getSequence(),
-      systemPrompt: options.systemPrompt,
+      systemPrompt: fullSystemPrompt,
     });
 
     // Get the last user message
-    const lastUserMessage = this.getLastUserMessage(messages);
-    if (!lastUserMessage) {
-      throw new Error('No user message found in conversation');
-    }
-
-    // Track tool calls made during this turn
-    const toolCalls: LLMToolCall[] = [];
-    let responseText = '';
-
-    // Convert tools to node-llama-cpp function format
-    const functions: Record<string, ReturnType<typeof defineChatSessionFunction>> = {};
-
-    if (tools.length > 0) {
-      this.log('Setting up', tools.length, 'tools for native function calling');
-
-      for (const tool of tools) {
-        const toolName = tool.name;
-        this.log('  - Registering tool:', toolName);
-
-        functions[toolName] = defineChatSessionFunction({
-          description: tool.description,
-          params: this.convertToNodeLlamaSchema(tool.parameters),
-          handler: async (params) => {
-            this.log('🔧 Tool called:', toolName);
-            this.log('   Arguments:', JSON.stringify(params, null, 2));
-
-            // Record the tool call
-            toolCalls.push({
-              id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-              name: toolName,
-              arguments: (params ?? {}) as Record<string, unknown>,
-            });
-
-            // Execute the tool if we have an executor
-            if (this.toolExecutor) {
-              try {
-                const result = await this.toolExecutor(toolName, (params ?? {}) as Record<string, unknown>);
-                this.log('   Result:', result.slice(0, 200) + (result.length > 200 ? '...' : ''));
-                return result;
-              } catch (error) {
-                const errMsg = `Error: ${(error as Error).message}`;
-                this.log('   Error:', errMsg);
-                return errMsg;
-              }
-            }
-
-            // If no executor, return a placeholder
-            return JSON.stringify({ status: 'executed', tool: toolName });
-          },
-        });
+    let lastUserMessage = '';
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role === 'user') {
+        if (typeof msg.content === 'string') {
+          lastUserMessage = msg.content;
+        } else {
+          // Extract text from content blocks
+          lastUserMessage = msg.content
+            .filter((b) => b.type === 'text')
+            .map((b) => (b as { type: 'text'; text: string }).text)
+            .join('\n');
+        }
+        break;
       }
     }
 
-    console.log('[LocalLLM] Preparing to call session.prompt()...');
-    console.log('[LocalLLM] Last user message length:', lastUserMessage.length);
-    console.log('[LocalLLM] Message preview:', lastUserMessage.slice(0, 200) + '...');
-    this.log('\n📝 Prompt to model:');
-    this.log('─'.repeat(60));
-    this.log(lastUserMessage.slice(0, 500) + (lastUserMessage.length > 500 ? '\n...[truncated]' : ''));
-    this.log('─'.repeat(60));
+    if (!lastUserMessage) {
+      return {
+        content: '',
+        toolCalls: [],
+        stopReason: 'end_turn',
+        usage: { inputTokens: 0, outputTokens: 0 },
+      };
+    }
+
+    this.log('User message:', lastUserMessage.slice(0, 200) + (lastUserMessage.length > 200 ? '...' : ''));
 
     try {
-      // Prompt the model with native function calling
-      const promptOptions: any = {
-        maxTokens: options.maxTokens,
+      console.log('[LocalLLM] Calling session.prompt()...');
+
+      // Prompt the model
+      const responseText = await session.prompt(lastUserMessage, {
+        maxTokens: options.maxTokens || 4096,
         temperature: options.temperature ?? 0.7,
+      });
+
+      console.log('[LocalLLM] Got response:', responseText.length, 'chars');
+      this.log('Response preview:', responseText.slice(0, 500));
+
+      // Parse tool calls from response
+      const toolCalls = this.parseToolCalls(responseText, tools);
+
+      // Clean the response text (remove tool call JSON)
+      const cleanedContent = toolCalls.length > 0
+        ? this.cleanResponse(responseText, toolCalls)
+        : responseText;
+
+      const result: LLMResponse = {
+        content: cleanedContent,
+        toolCalls,
+        stopReason: toolCalls.length > 0 ? 'tool_use' : 'end_turn',
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+        },
       };
 
-      // Only pass functions if we have any
-      if (Object.keys(functions).length > 0) {
-        promptOptions.functions = functions;
-        console.log('[LocalLLM] Passing', Object.keys(functions).length, 'functions to prompt');
-      } else {
-        console.log('[LocalLLM] No functions to pass');
+      console.log('[LocalLLM] Returning:', {
+        contentLength: result.content.length,
+        toolCalls: result.toolCalls.length,
+        stopReason: result.stopReason,
+      });
+
+      if (toolCalls.length > 0) {
+        console.log('[LocalLLM] Tool calls:', toolCalls.map(tc => tc.name).join(', '));
       }
 
-      console.log('[LocalLLM] Calling session.prompt() now...');
-      responseText = await session.prompt(lastUserMessage, promptOptions);
-      console.log('[LocalLLM] session.prompt() returned, response length:', responseText.length);
-
-      this.log('\n📤 Model response:');
-      this.log('─'.repeat(60));
-      this.log(responseText.slice(0, 1000) + (responseText.length > 1000 ? '\n...[truncated]' : ''));
-      this.log('─'.repeat(60));
-      this.log('Tool calls captured:', toolCalls.length);
-
-      // If no tool calls were captured via handlers, try parsing from text
-      if (toolCalls.length === 0 && tools.length > 0) {
-        this.log('No native tool calls detected, trying text parsing...');
-        const parsedCalls = this.parseToolCallsFromResponse(responseText, tools);
-        if (parsedCalls.length > 0) {
-          this.log('Found', parsedCalls.length, 'tool calls via text parsing');
-          toolCalls.push(...parsedCalls);
-          responseText = this.removeToolCallsFromResponse(responseText);
-        }
-      }
-
+      return result;
     } catch (error) {
       const err = error as Error;
-      console.error('[LocalLLM] ❌ CHAT ERROR:', err.message);
-      console.error('[LocalLLM] Error stack:', err.stack);
+      console.error('[LocalLLM] Error during chat:', err.message);
+      if (this.verbose) {
+        console.error('[LocalLLM] Stack:', err.stack);
+      }
       return {
         content: '',
         toolCalls: [],
@@ -296,41 +440,6 @@ export class LocalLlamaProvider implements LLMProvider {
         usage: { inputTokens: 0, outputTokens: 0 },
       };
     }
-
-    const result: LLMResponse = {
-      content: responseText,
-      toolCalls,
-      stopReason: toolCalls.length > 0 ? 'tool_use' : 'end_turn',
-      usage: {
-        inputTokens: 0,
-        outputTokens: 0,
-      },
-    };
-
-    console.log('[LocalLLM] chat() returning:', {
-      contentLength: result.content.length,
-      toolCallCount: result.toolCalls.length,
-      stopReason: result.stopReason
-    });
-
-    return result;
-  }
-
-  /**
-   * Convert our JSON Schema to node-llama-cpp's expected format
-   */
-  private convertToNodeLlamaSchema(schema: any): any {
-    // node-llama-cpp expects a specific format
-    // Pass through most properties but ensure type is correct
-    if (!schema || typeof schema !== 'object') {
-      return { type: 'object', properties: {} };
-    }
-
-    return {
-      type: schema.type || 'object',
-      properties: schema.properties || {},
-      required: schema.required || [],
-    };
   }
 
   /**
@@ -338,11 +447,11 @@ export class LocalLlamaProvider implements LLMProvider {
    */
   async shutdown(): Promise<void> {
     if (this.context) {
-      await this.context.dispose();
+      await this.context.dispose?.();
       this.context = null;
     }
     if (this.model) {
-      await this.model.dispose();
+      await this.model.dispose?.();
       this.model = null;
     }
     this.llama = null;
@@ -352,154 +461,15 @@ export class LocalLlamaProvider implements LLMProvider {
    * Get information about the current model
    */
   getModelInfo(): ModelInfo {
-    return {
-      name: path.basename(this.modelPath, '.gguf'),
-      contextLength: this.options.contextSize ?? 32768,
-      supportsTools: true,
-      supportsStreaming: true,
-      isLocal: true,
-    };
-  }
-
-  /**
-   * Parse tool calls from the model's response text (fallback for models without native support)
-   */
-  private parseToolCallsFromResponse(responseText: string, tools: LLMTool[]): LLMToolCall[] {
-    const toolCalls: LLMToolCall[] = [];
-    const validToolNames = new Set(tools.map(t => t.name));
-
-    // Pattern 1: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
-    const toolCallPattern = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi;
-    let match;
-
-    while ((match = toolCallPattern.exec(responseText)) !== null) {
-      try {
-        const jsonStr = match[1].trim();
-        const parsed = JSON.parse(jsonStr);
-
-        if (parsed.name && validToolNames.has(parsed.name)) {
-          toolCalls.push({
-            id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-            name: parsed.name,
-            arguments: parsed.arguments || parsed.params || {},
-          });
-        }
-      } catch {
-        this.log('Failed to parse tool call:', match[1]);
+    return (
+      this.modelInfo || {
+        name: path.basename(this.modelPath, '.gguf') || 'local',
+        contextLength: 32768,
+        supportsTools: true,
+        supportsStreaming: false,
+        isLocal: true,
       }
-    }
-
-    // Pattern 2: ```json or ```tool blocks
-    const codeBlockPattern = /```(?:tool|json)?\s*([\s\S]*?)\s*```/gi;
-    while ((match = codeBlockPattern.exec(responseText)) !== null) {
-      try {
-        const jsonStr = match[1].trim();
-        if (jsonStr.includes('"name"') && (jsonStr.includes('"arguments"') || jsonStr.includes('"params"'))) {
-          const parsed = JSON.parse(jsonStr);
-          if (parsed.name && validToolNames.has(parsed.name)) {
-            const exists = toolCalls.some(tc => tc.name === parsed.name &&
-              JSON.stringify(tc.arguments) === JSON.stringify(parsed.arguments || parsed.params || {}));
-            if (!exists) {
-              toolCalls.push({
-                id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-                name: parsed.name,
-                arguments: parsed.arguments || parsed.params || {},
-              });
-            }
-          }
-        }
-      } catch {
-        // Not a valid tool call
-      }
-    }
-
-    // Pattern 3: Qwen native format - <|tool_call|> or similar
-    const qwenPattern = /<\|?(?:tool_call|function_call)\|?>\s*([\s\S]*?)\s*<\|?\/(?:tool_call|function_call)\|?>/gi;
-    while ((match = qwenPattern.exec(responseText)) !== null) {
-      try {
-        const jsonStr = match[1].trim();
-        const parsed = JSON.parse(jsonStr);
-        if (parsed.name && validToolNames.has(parsed.name)) {
-          toolCalls.push({
-            id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-            name: parsed.name,
-            arguments: parsed.arguments || parsed.params || {},
-          });
-        }
-      } catch {
-        // Not valid JSON
-      }
-    }
-
-    return toolCalls;
-  }
-
-  /**
-   * Remove tool call blocks from response text
-   */
-  private removeToolCallsFromResponse(responseText: string): string {
-    let cleaned = responseText;
-    cleaned = cleaned.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '');
-    cleaned = cleaned.replace(/<\|?(?:tool_call|function_call)\|?>[\s\S]*?<\|?\/(?:tool_call|function_call)\|?>/gi, '');
-    cleaned = cleaned.replace(/```(?:tool|json)?\s*\{[\s\S]*?"name"[\s\S]*?\}\s*```/gi, '');
-    cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
-    return cleaned;
-  }
-
-  /**
-   * Extract the last user message from the conversation
-   */
-  private getLastUserMessage(messages: LLMMessage[]): string | null {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (msg.role === 'user') {
-        if (typeof msg.content === 'string') {
-          return msg.content;
-        }
-        return msg.content
-          .filter((c) => c.type === 'text')
-          .map((c) => (c as { type: 'text'; text: string }).text)
-          .join('\n');
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Format GPU info for display
-   */
-  private formatGpuInfo(): string {
-    if (!this.hardware) return 'GPU: Unknown';
-
-    if (this.hardware.gpuVendor === 'none') {
-      return 'GPU: None detected (CPU-only mode)';
-    }
-
-    if (this.hardware.gpuName) {
-      return `GPU: ${this.hardware.gpuName} (${this.hardware.gpuVram} GB VRAM)`;
-    }
-
-    const vendor =
-      this.hardware.gpuVendor.charAt(0).toUpperCase() + this.hardware.gpuVendor.slice(1);
-    return `GPU: ${vendor} (${this.hardware.gpuVram} GB VRAM)`;
-  }
-
-  /**
-   * Report progress to callback
-   */
-  private reportProgress(phase: string, percent?: number, message?: string): void {
-    if (this.progressCallback) {
-      this.progressCallback({ phase, percent, message });
-    }
-  }
-
-  /**
-   * Log message if verbose mode is enabled
-   */
-  private log(...args: any[]): void {
-    if (this.verbose) {
-      console.log('[LocalLLM]', ...args);
-    }
+    );
   }
 }
 

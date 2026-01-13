@@ -194,6 +194,11 @@ export interface ModelRecommendation {
 }
 
 /**
+ * Model family type for local models
+ */
+export type ModelFamily = 'lfm' | 'qwen';
+
+/**
  * Options for creating an LLM provider
  */
 export interface CreateProviderOptions {
@@ -208,6 +213,7 @@ export interface CreateProviderOptions {
   // Local options
   modelPath?: string;
   localModel?: string;
+  modelFamily?: ModelFamily; // 'lfm' (LiquidAI) or 'qwen'
   gpuLayers?: number;
   contextSize?: number;
   threads?: number;

@@ -87,6 +87,7 @@ program
   // Local mode options
   .option('--full-local', 'Run entirely locally without cloud APIs (requires initial model download)')
   .option('--local-model <model>', 'Local model to use (default: auto-selected based on hardware)')
+  .option('--model-family <family>', 'Model family: "lfm" (LiquidAI, default) or "qwen"', 'lfm')
   .option('--model-path <path>', 'Path to a local GGUF model file')
   .option('--use-ollama', 'Use Ollama server instead of bundled inference')
   .option('--ollama-host <url>', 'Ollama server URL (default: http://localhost:11434)')
@@ -114,7 +115,8 @@ program
         if (options.useOllama) {
           console.log(chalk.gray('Using Ollama backend at:'), chalk.yellow(options.ollamaHost || 'http://localhost:11434'));
         } else {
-          console.log(chalk.gray('Using self-contained local inference (node-llama-cpp)'));
+          const familyName = options.modelFamily === 'qwen' ? 'Qwen' : 'LFM (LiquidAI)';
+          console.log(chalk.gray('Using self-contained local inference with'), chalk.yellow(familyName), chalk.gray('models'));
         }
       } else {
         console.log(chalk.cyan.bold('\n📚 ArchitecturalWiki Generator\n'));
@@ -296,6 +298,7 @@ program
         // Local mode options
         fullLocal: options.fullLocal,
         localModel: options.localModel,
+        modelFamily: options.modelFamily as 'lfm' | 'qwen',
         modelPath: options.modelPath,
         useOllama: options.useOllama,
         ollamaHost: options.ollamaHost,
@@ -307,9 +310,9 @@ program
       // Choose generator based on options
       let generator;
       if (options.fullLocal) {
-        // Local mode - use direct API style generation with local provider
-        console.log(chalk.yellow('\n🏠 Local mode: Using local LLM for generation\n'));
-        generator = agent.generateWikiDirectApi(generationOptions);
+        // Local mode - use simpler page-by-page generation
+        console.log(chalk.yellow('\n🏠 Local mode: Page-by-page generation\n'));
+        generator = agent.generateWikiLocalPageByPage(generationOptions);
       } else if (options.directApi) {
         console.log(chalk.yellow('\n⚡ Direct API mode: Using Anthropic API directly (bypasses Claude Code)\n'));
         generator = agent.generateWikiDirectApi(generationOptions);

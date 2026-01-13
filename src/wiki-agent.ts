@@ -62,6 +62,11 @@ export interface WikiGenerationOptions {
    */
   localModel?: string;
   /**
+   * Model family for local mode: 'lfm' (LiquidAI) or 'qwen'.
+   * LFM is recommended for better tool calling support.
+   */
+  modelFamily?: 'lfm' | 'qwen';
+  /**
    * Path to a local GGUF model file.
    */
   modelPath?: string;
@@ -767,6 +772,7 @@ export class ArchitecturalWikiAgent {
         useOllama: options.useOllama,
         ollamaHost: options.ollamaHost,
         localModel: options.localModel,
+        modelFamily: options.modelFamily,
         modelPath: options.modelPath,
         gpuLayers: options.gpuLayers,
         contextSize: options.contextSize,
@@ -779,14 +785,6 @@ export class ArchitecturalWikiAgent {
       const err = error as Error;
       yield { type: 'error', message: `Failed to initialize LLM provider: ${err.message}` };
       return;
-    }
-
-    // For local mode with native function calling, set the tool executor
-    if (options.fullLocal && 'setToolExecutor' in provider) {
-      console.log('[Local] Setting up tool executor for native function calling...');
-      (provider as any).setToolExecutor(async (name: string, args: Record<string, unknown>): Promise<string> => {
-        return await this.executeDirectApiTool(name, args as Record<string, any>);
-      });
     }
 
     const modelInfo = provider.getModelInfo();
@@ -1092,6 +1090,407 @@ Create all ${missingPages.length} missing pages now.`;
       yield { type: 'error', message: err.message };
       throw err;
     }
+  }
+
+  /**
+   * Generate wiki using local LLM with page-by-page approach.
+   * Simpler and more reliable than full agent loop for local models.
+   */
+  async *generateWikiLocalPageByPage(
+    options: WikiGenerationOptions
+  ): AsyncGenerator<ProgressEvent | any> {
+    currentGenerationOptions = options;
+
+    // Phase 1: Prepare repository
+    yield { type: 'phase', message: 'Preparing repository', progress: 0 };
+    this.repoPath = await this.prepareRepository(options.repoUrl, options.accessToken);
+    this.outputDir = path.resolve(options.outputDir);
+
+    if (!fs.existsSync(this.outputDir)) {
+      fs.mkdirSync(this.outputDir, { recursive: true });
+    }
+
+    // Phase 2: Index codebase (or load existing)
+    const cachePath = path.join(this.outputDir, '.ted-mosby-cache');
+    const metadataPath = path.join(cachePath, 'metadata.json');
+
+    if (options.skipIndex && fs.existsSync(metadataPath)) {
+      yield { type: 'phase', message: 'Loading existing index', progress: 10 };
+      this.ragSystem = new RAGSystem({
+        storePath: cachePath,
+        repoPath: this.repoPath
+      });
+      await this.ragSystem.loadMetadataOnly();
+    } else {
+      yield { type: 'phase', message: 'Indexing codebase', progress: 10 };
+      this.ragSystem = new RAGSystem({
+        storePath: cachePath,
+        repoPath: this.repoPath,
+        maxChunks: options.maxChunks
+      });
+      await this.ragSystem.indexRepository();
+    }
+
+    const searchMode = this.ragSystem['index'] ? 'vector search' : 'keyword search';
+    yield { type: 'step', message: `Loaded ${this.ragSystem.getDocumentCount()} chunks (${searchMode})` };
+
+    // Phase 3: Initialize local LLM provider
+    yield { type: 'phase', message: 'Initializing local LLM', progress: 15 };
+
+    let provider: LLMProvider;
+    try {
+      provider = await createLLMProvider({
+        fullLocal: true,
+        useOllama: options.useOllama,
+        ollamaHost: options.ollamaHost,
+        localModel: options.localModel,
+        modelFamily: options.modelFamily,
+        modelPath: options.modelPath,
+        gpuLayers: options.gpuLayers,
+        contextSize: options.contextSize,
+        threads: options.threads,
+        verbose: options.verbose,
+      });
+    } catch (error) {
+      const err = error as Error;
+      yield { type: 'error', message: `Failed to initialize local LLM: ${err.message}` };
+      return;
+    }
+
+    const modelInfo = provider.getModelInfo();
+    console.log('\n' + '='.repeat(60));
+    console.log('[Local] Page-by-Page Generation Mode');
+    console.log('[Local] Model:', modelInfo.name);
+    console.log('[Local] Context:', modelInfo.contextLength, 'tokens');
+    console.log('[Local] Repository:', this.repoPath);
+    console.log('[Local] Output:', this.outputDir);
+    console.log('='.repeat(60) + '\n');
+
+    // Phase 4: Analyze codebase structure to determine pages to generate
+    yield { type: 'phase', message: 'Analyzing codebase structure', progress: 20 };
+
+    const pagesToGenerate = await this.analyzeCodebaseForPages(options);
+    console.log(`[Local] Identified ${pagesToGenerate.length} pages to generate\n`);
+
+    // Phase 5: Generate each page one at a time
+    yield { type: 'phase', message: `Generating ${pagesToGenerate.length} wiki pages`, progress: 25 };
+
+    let pagesGenerated = 0;
+    let pagesFailed = 0;
+
+    for (const pageSpec of pagesToGenerate) {
+      const progress = 25 + ((pagesGenerated / pagesToGenerate.length) * 70);
+      yield { type: 'step', message: `Generating: ${pageSpec.title}`, progress };
+
+      console.log(`\n[Local] ─── Page ${pagesGenerated + 1}/${pagesToGenerate.length}: ${pageSpec.title} ───`);
+
+      try {
+        const content = await this.generateSinglePage(provider, pageSpec, options);
+
+        if (content) {
+          // Write the page
+          const pagePath = path.join(this.outputDir, pageSpec.filename);
+          const pageDir = path.dirname(pagePath);
+          if (!fs.existsSync(pageDir)) {
+            fs.mkdirSync(pageDir, { recursive: true });
+          }
+          fs.writeFileSync(pagePath, content, 'utf-8');
+
+          console.log(`[Local] ✓ Generated: ${pageSpec.filename}`);
+          pagesGenerated++;
+          yield { type: 'file', message: pageSpec.filename, detail: pageSpec.title };
+        } else {
+          console.log(`[Local] ⚠ Empty content for: ${pageSpec.title}`);
+          pagesFailed++;
+        }
+      } catch (error) {
+        const err = error as Error;
+        console.error(`[Local] ✗ Failed: ${pageSpec.title} - ${err.message}`);
+        pagesFailed++;
+      }
+    }
+
+    // Phase 6: Generate index page
+    yield { type: 'phase', message: 'Generating index page', progress: 95 };
+
+    try {
+      const indexContent = await this.generateIndexPage(provider, pagesToGenerate, options);
+      if (indexContent) {
+        fs.writeFileSync(path.join(this.outputDir, 'index.md'), indexContent, 'utf-8');
+        console.log(`[Local] ✓ Generated: index.md`);
+      }
+    } catch (error) {
+      console.error(`[Local] ✗ Failed to generate index page`);
+    }
+
+    // Shutdown provider
+    await provider.shutdown();
+
+    console.log('\n' + '='.repeat(60));
+    console.log('[Local] GENERATION COMPLETE');
+    console.log(`[Local] Pages generated: ${pagesGenerated}`);
+    console.log(`[Local] Pages failed: ${pagesFailed}`);
+    console.log('='.repeat(60) + '\n');
+
+    yield { type: 'complete', message: `Local generation complete: ${pagesGenerated} pages`, progress: 100 };
+  }
+
+  /**
+   * Analyze codebase to determine which pages to generate
+   */
+  private async analyzeCodebaseForPages(options: WikiGenerationOptions): Promise<Array<{
+    title: string;
+    filename: string;
+    type: 'overview' | 'component' | 'api' | 'guide';
+    context: string;
+    sourceFiles: string[];
+  }>> {
+    const pages: Array<{
+      title: string;
+      filename: string;
+      type: 'overview' | 'component' | 'api' | 'guide';
+      context: string;
+      sourceFiles: string[];
+    }> = [];
+
+    // Get all source files by scanning the repository
+    const sourceFiles = await this.scanSourceFiles(this.repoPath);
+
+    // 1. Architecture Overview
+    pages.push({
+      title: 'Architecture Overview',
+      filename: 'architecture.md',
+      type: 'overview',
+      context: 'High-level system architecture, main components, and how they interact',
+      sourceFiles: sourceFiles.slice(0, 20), // Sample of key files
+    });
+
+    // 2. Analyze directory structure for component pages
+    const directories = new Map<string, string[]>();
+    for (const file of sourceFiles) {
+      const dir = path.dirname(file);
+      const parts = dir.split(path.sep);
+      // Get the first meaningful directory
+      const mainDir = parts.find(p => p !== '.' && p !== 'src' && p !== 'lib' && p.length > 0) || 'root';
+      if (!directories.has(mainDir)) {
+        directories.set(mainDir, []);
+      }
+      directories.get(mainDir)!.push(file);
+    }
+
+    // Create a page for each major directory/component
+    for (const [dir, files] of directories) {
+      if (files.length >= 2) { // Only create pages for directories with multiple files
+        const title = this.formatDirectoryName(dir);
+        pages.push({
+          title: `${title} Component`,
+          filename: `components/${dir.toLowerCase().replace(/[^a-z0-9]/g, '-')}.md`,
+          type: 'component',
+          context: `Documentation for the ${title} component/module`,
+          sourceFiles: files.slice(0, 15),
+        });
+      }
+    }
+
+    // 3. Getting Started guide
+    pages.push({
+      title: 'Getting Started',
+      filename: 'getting-started.md',
+      type: 'guide',
+      context: 'How to set up, install, and start using the project',
+      sourceFiles: sourceFiles.filter(f =>
+        f.includes('package.json') ||
+        f.includes('README') ||
+        f.includes('config') ||
+        f.includes('setup')
+      ).slice(0, 10),
+    });
+
+    // 4. API Reference (if there are API-like files)
+    const apiFiles = sourceFiles.filter(f =>
+      f.includes('api') ||
+      f.includes('endpoint') ||
+      f.includes('route') ||
+      f.includes('handler')
+    );
+    if (apiFiles.length > 0) {
+      pages.push({
+        title: 'API Reference',
+        filename: 'api-reference.md',
+        type: 'api',
+        context: 'API endpoints, handlers, and how to use them',
+        sourceFiles: apiFiles.slice(0, 15),
+      });
+    }
+
+    // Limit total pages to a reasonable number for local mode
+    return pages.slice(0, 15);
+  }
+
+  /**
+   * Format a directory name into a readable title
+   */
+  private formatDirectoryName(name: string): string {
+    return name
+      .replace(/[-_]/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  }
+
+  /**
+   * Generate a single wiki page
+   */
+  private async generateSinglePage(
+    provider: LLMProvider,
+    pageSpec: {
+      title: string;
+      filename: string;
+      type: string;
+      context: string;
+      sourceFiles: string[];
+    },
+    options: WikiGenerationOptions
+  ): Promise<string | null> {
+    // Gather context from source files
+    let sourceContext = '';
+    for (const file of pageSpec.sourceFiles.slice(0, 10)) {
+      try {
+        const fullPath = path.join(this.repoPath, file);
+        if (fs.existsSync(fullPath)) {
+          const content = fs.readFileSync(fullPath, 'utf-8');
+          const preview = content.slice(0, 2000);
+          sourceContext += `\n### File: ${file}\n\`\`\`\n${preview}\n${content.length > 2000 ? '\n... (truncated)' : ''}\n\`\`\`\n`;
+        }
+      } catch {
+        // Skip files we can't read
+      }
+    }
+
+    const prompt = `Generate a wiki documentation page for: "${pageSpec.title}"
+
+Page Type: ${pageSpec.type}
+Context: ${pageSpec.context}
+
+Source Files for Reference:
+${sourceContext || 'No source files available'}
+
+Requirements:
+1. Write in clear, professional Markdown
+2. Include a descriptive title as an H1 heading
+3. Add a brief overview section
+4. Document the key functionality with code examples where appropriate
+5. IMPORTANT: Include source file references like \`See: path/to/file.ts:123\` for traceability
+6. Add cross-references to related documentation using relative links like \`[Related Topic](./related.md)\`
+7. Keep the page focused and concise (aim for 300-800 words)
+
+Generate the complete Markdown content for this wiki page:`;
+
+    const messages: LLMMessage[] = [
+      { role: 'user', content: prompt }
+    ];
+
+    const systemPrompt = `You are a technical documentation expert. Generate clear, accurate wiki documentation based on source code analysis. Always include source file references for traceability. Use professional Markdown formatting.`;
+
+    try {
+      const response = await provider.chat(messages, [], {
+        maxTokens: 4096,
+        systemPrompt,
+        temperature: 0.7,
+      });
+
+      if (response.content && response.content.length > 100) {
+        return response.content;
+      }
+      return null;
+    } catch (error) {
+      if (options.verbose) {
+        console.error(`[Local] Error generating page: ${(error as Error).message}`);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Generate the index page linking all generated pages
+   */
+  private async generateIndexPage(
+    provider: LLMProvider,
+    pages: Array<{ title: string; filename: string; type: string }>,
+    options: WikiGenerationOptions
+  ): Promise<string | null> {
+    const pageLinks = pages.map(p =>
+      `- [${p.title}](./${p.filename}) - ${p.type}`
+    ).join('\n');
+
+    const prompt = `Generate an index page for a technical wiki documentation site.
+
+Project: ${path.basename(this.repoPath)}
+
+Available Pages:
+${pageLinks}
+
+Requirements:
+1. Create an engaging introduction to the project
+2. Organize the page links into logical sections (Overview, Components, Guides, API)
+3. Add a brief description for each section
+4. Use proper Markdown formatting with a clear hierarchy
+5. Keep it professional and helpful for developers
+
+Generate the complete Markdown content for the index page:`;
+
+    const messages: LLMMessage[] = [
+      { role: 'user', content: prompt }
+    ];
+
+    try {
+      const response = await provider.chat(messages, [], {
+        maxTokens: 2048,
+        systemPrompt: 'You are a technical documentation expert. Generate clear, well-organized index pages.',
+        temperature: 0.7,
+      });
+
+      return response.content || null;
+    } catch {
+      // Fallback to a simple index
+      return `# ${path.basename(this.repoPath)} Documentation\n\nWelcome to the documentation.\n\n## Pages\n\n${pageLinks}`;
+    }
+  }
+
+  /**
+   * Scan repository for source files
+   */
+  private async scanSourceFiles(repoPath: string): Promise<string[]> {
+    const sourceFiles: string[] = [];
+    const extensions = ['.ts', '.js', '.tsx', '.jsx', '.py', '.go', '.rs', '.java', '.rb', '.php', '.cs', '.cpp', '.c', '.h'];
+    const ignoreDirs = ['node_modules', '.git', 'dist', 'build', 'coverage', '.next', '__pycache__', 'vendor'];
+
+    const scan = (dir: string, relativePath: string = '') => {
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          const relPath = path.join(relativePath, entry.name);
+
+          if (entry.isDirectory()) {
+            if (!ignoreDirs.includes(entry.name) && !entry.name.startsWith('.')) {
+              scan(fullPath, relPath);
+            }
+          } else if (entry.isFile()) {
+            const ext = path.extname(entry.name).toLowerCase();
+            if (extensions.includes(ext)) {
+              sourceFiles.push(relPath);
+            }
+          }
+        }
+      } catch {
+        // Ignore directories we can't read
+      }
+    };
+
+    scan(repoPath);
+    return sourceFiles;
   }
 
   /**

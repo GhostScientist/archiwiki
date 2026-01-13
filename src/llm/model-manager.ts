@@ -15,10 +15,49 @@ import { pipeline } from 'stream/promises';
 import type { HardwareProfile, ModelRecommendation, ProgressCallback } from './types.js';
 
 /**
+ * Model family type for filtering models
+ */
+export type ModelFamily = 'lfm' | 'qwen';
+
+/**
+ * Extended model recommendation with family
+ */
+interface ModelRegistryEntry extends ModelRecommendation {
+  family: ModelFamily;
+}
+
+/**
  * Registry of available models with their hardware requirements
  */
-const MODEL_REGISTRY: ModelRecommendation[] = [
+const MODEL_REGISTRY: ModelRegistryEntry[] = [
+  // LiquidAI LFM2.5 models - optimized for on-device agentic tasks
   {
+    family: 'lfm',
+    modelId: 'lfm2.5-1.2b-instruct',
+    ggufFile: 'LFM2.5-1.2B-Instruct-Q8_0.gguf',
+    downloadUrl:
+      'https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/resolve/main/LFM2.5-1.2B-Instruct-Q8_0.gguf',
+    fileSizeBytes: 1_300_000_000, // ~1.3 GB
+    minVram: 2,
+    minRam: 4,
+    contextLength: 32768,
+    quality: 'good', // Excellent for size, good absolute quality
+  },
+  {
+    family: 'lfm',
+    modelId: 'lfm2-2.6b-exp',
+    ggufFile: 'LFM2-2.6B-Exp-Q8_0.gguf',
+    downloadUrl:
+      'https://huggingface.co/LiquidAI/LFM2-2.6B-Exp-GGUF/resolve/main/LFM2-2.6B-Exp-Q8_0.gguf',
+    fileSizeBytes: 2_800_000_000, // ~2.8 GB
+    minVram: 3,
+    minRam: 6,
+    contextLength: 32768,
+    quality: 'good',
+  },
+  // Qwen2.5 Coder models - larger, higher quality
+  {
+    family: 'qwen',
     modelId: 'qwen2.5-coder-32b-q4',
     ggufFile: 'qwen2.5-coder-32b-instruct-q4_k_m.gguf',
     downloadUrl:
@@ -30,6 +69,7 @@ const MODEL_REGISTRY: ModelRecommendation[] = [
     quality: 'excellent',
   },
   {
+    family: 'qwen',
     modelId: 'qwen2.5-coder-14b-q5',
     ggufFile: 'qwen2.5-coder-14b-instruct-q5_k_m.gguf',
     downloadUrl:
@@ -41,6 +81,7 @@ const MODEL_REGISTRY: ModelRecommendation[] = [
     quality: 'excellent',
   },
   {
+    family: 'qwen',
     modelId: 'qwen2.5-coder-7b-q5',
     ggufFile: 'qwen2.5-coder-7b-instruct-q5_k_m.gguf',
     downloadUrl:
@@ -52,6 +93,7 @@ const MODEL_REGISTRY: ModelRecommendation[] = [
     quality: 'good',
   },
   {
+    family: 'qwen',
     modelId: 'qwen2.5-coder-3b-q8',
     ggufFile: 'qwen2.5-coder-3b-instruct-q8_0.gguf',
     downloadUrl:
@@ -63,6 +105,7 @@ const MODEL_REGISTRY: ModelRecommendation[] = [
     quality: 'acceptable',
   },
   {
+    family: 'qwen',
     modelId: 'qwen2.5-coder-1.5b-q8',
     ggufFile: 'qwen2.5-coder-1.5b-instruct-q8_0.gguf',
     downloadUrl:
@@ -198,8 +241,25 @@ export class ModelManager {
   /**
    * Get all available models in the registry
    */
-  getAvailableModels(): ModelRecommendation[] {
+  getAvailableModels(family?: ModelFamily): ModelRecommendation[] {
+    if (family) {
+      return MODEL_REGISTRY.filter((m) => m.family === family);
+    }
     return [...MODEL_REGISTRY];
+  }
+
+  /**
+   * Get models by family name
+   */
+  getModelsByFamily(family: ModelFamily): ModelRecommendation[] {
+    return MODEL_REGISTRY.filter((m) => m.family === family);
+  }
+
+  /**
+   * Get family for a model ID
+   */
+  getModelFamily(modelId: string): ModelFamily | undefined {
+    return MODEL_REGISTRY.find((m) => m.modelId === modelId)?.family;
   }
 
   /**
@@ -211,16 +271,29 @@ export class ModelManager {
 
   /**
    * Recommend the best model for the given hardware
+   * @param hardware - Hardware profile
+   * @param family - Optional model family filter ('lfm' or 'qwen')
    */
-  recommendModel(hardware: HardwareProfile): ModelRecommendation {
+  recommendModel(hardware: HardwareProfile, family?: ModelFamily): ModelRecommendation {
+    // Filter by family if specified
+    const registry = family
+      ? MODEL_REGISTRY.filter((m) => m.family === family)
+      : MODEL_REGISTRY;
+
     // Find models that fit the hardware
-    const candidates = MODEL_REGISTRY.filter((m) => {
+    const candidates = registry.filter((m) => {
       // Check if GPU can handle it
       if (hardware.gpuVram >= m.minVram) return true;
       // Check if system RAM can handle it (CPU-only mode)
       if (hardware.systemRam >= m.minRam) return true;
       return false;
     }).sort((a, b) => {
+      // For LFM models, prefer the instruct variant first (best for agentic tasks)
+      if (family === 'lfm') {
+        const aIsInstruct = a.modelId.includes('instruct') ? 0 : 1;
+        const bIsInstruct = b.modelId.includes('instruct') ? 0 : 1;
+        if (aIsInstruct !== bIsInstruct) return aIsInstruct - bIsInstruct;
+      }
       // Prefer higher quality first
       const qualityOrder = { excellent: 0, good: 1, acceptable: 2 };
       if (a.quality !== b.quality) {
@@ -231,13 +304,15 @@ export class ModelManager {
     });
 
     if (candidates.length === 0) {
+      const familyNote = family ? ` in the '${family}' family` : '';
       throw new Error(
-        `Insufficient hardware for local mode.\n\n` +
+        `No suitable models${familyNote} for your hardware.\n\n` +
           `Minimum requirements: 2GB VRAM or 4GB RAM\n` +
           `Detected: ${hardware.gpuVram}GB VRAM, ${hardware.systemRam.toFixed(1)}GB RAM\n\n` +
           `Options:\n` +
           `  1. Use cloud mode (remove --full-local flag)\n` +
-          `  2. Add more RAM or use a machine with a GPU`
+          `  2. Try a different model family (-m lfm or -m qwen)\n` +
+          `  3. Add more RAM or use a machine with a GPU`
       );
     }
 
