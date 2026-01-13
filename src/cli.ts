@@ -84,19 +84,41 @@ program
   .option('--max-turns <number>', 'Maximum agent turns (default 200, lower to reduce cost estimate)', parseInt)
   .option('--direct-api', 'Use Anthropic API directly (bypasses Claude Code billing, uses your API credits)')
   .option('--ai-chat', 'Enable AI chat feature with semantic search in generated site')
+  // Local mode options
+  .option('--full-local', 'Run entirely locally without cloud APIs (requires initial model download)')
+  .option('--local-model <model>', 'Local model to use (default: auto-selected based on hardware)')
+  .option('--model-path <path>', 'Path to a local GGUF model file')
+  .option('--use-ollama', 'Use Ollama server instead of bundled inference')
+  .option('--ollama-host <url>', 'Ollama server URL (default: http://localhost:11434)')
+  .option('--gpu-layers <n>', 'Number of GPU layers to offload (default: auto)', parseInt)
+  .option('--context-size <n>', 'Context window size for local models (default: 32768)', parseInt)
+  .option('--threads <n>', 'CPU threads for local inference (default: auto)', parseInt)
   .action(async (options) => {
     try {
       const configManager = new ConfigManager();
       const config = await configManager.load();
 
-      if (!configManager.hasApiKey()) {
+      // API key only required for cloud mode
+      if (!options.fullLocal && !configManager.hasApiKey()) {
         console.log(chalk.red('❌ No API key found.'));
         console.log(chalk.yellow('\nSet your Anthropic API key:'));
         console.log(chalk.gray('  export ANTHROPIC_API_KEY=your-key-here'));
+        console.log(chalk.yellow('\nOr use local mode (no API key needed):'));
+        console.log(chalk.gray('  ted-mosby generate -r ./repo --full-local'));
         process.exit(1);
       }
 
-      console.log(chalk.cyan.bold('\n📚 ArchitecturalWiki Generator\n'));
+      // Show mode banner
+      if (options.fullLocal) {
+        console.log(chalk.cyan.bold('\n🏠 ArchitecturalWiki Generator (Local Mode)\n'));
+        if (options.useOllama) {
+          console.log(chalk.gray('Using Ollama backend at:'), chalk.yellow(options.ollamaHost || 'http://localhost:11434'));
+        } else {
+          console.log(chalk.gray('Using self-contained local inference (node-llama-cpp)'));
+        }
+      } else {
+        console.log(chalk.cyan.bold('\n📚 ArchitecturalWiki Generator\n'));
+      }
       console.log(chalk.white('Repository:'), chalk.green(options.repo));
       console.log(chalk.white('Output:'), chalk.green(path.resolve(options.output)));
       if (options.path) console.log(chalk.white('Focus path:'), chalk.green(options.path));
@@ -194,12 +216,25 @@ program
         batchSize: options.batchSize,
         skipIndex: options.skipIndex,
         maxTurns: options.maxTurns,
-        directApi: options.directApi
+        directApi: options.directApi,
+        // Local mode options
+        fullLocal: options.fullLocal,
+        localModel: options.localModel,
+        modelPath: options.modelPath,
+        useOllama: options.useOllama,
+        ollamaHost: options.ollamaHost,
+        gpuLayers: options.gpuLayers,
+        contextSize: options.contextSize,
+        threads: options.threads
       };
 
       // Choose generator based on options
       let generator;
-      if (options.directApi) {
+      if (options.fullLocal) {
+        // Local mode - use direct API style generation with local provider
+        console.log(chalk.yellow('\n🏠 Local mode: Using local LLM for generation\n'));
+        generator = agent.generateWikiDirectApi(generationOptions);
+      } else if (options.directApi) {
         console.log(chalk.yellow('\n⚡ Direct API mode: Using Anthropic API directly (bypasses Claude Code)\n'));
         generator = agent.generateWikiDirectApi(generationOptions);
       } else if (options.skipIndex) {

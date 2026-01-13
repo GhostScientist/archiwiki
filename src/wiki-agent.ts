@@ -9,6 +9,7 @@ import { PermissionManager } from './permissions.js';
 import { MCPConfigManager } from './mcp-config.js';
 import { RAGSystem } from './rag/index.js';
 import { WIKI_SYSTEM_PROMPT } from './prompts/wiki-system.js';
+import { createLLMProvider, type LLMProvider, type LLMMessage, type LLMTool } from './llm/index.js';
 
 export interface WikiGenerationOptions {
   repoUrl: string;
@@ -48,6 +49,42 @@ export interface WikiGenerationOptions {
    * Uses your ANTHROPIC_API_KEY credits directly.
    */
   directApi?: boolean;
+
+  // Local mode options
+  /**
+   * Run entirely locally without cloud APIs.
+   * Uses node-llama-cpp for in-process inference.
+   */
+  fullLocal?: boolean;
+  /**
+   * Local model to use (default: auto-selected based on hardware).
+   * Can be a model ID from registry or an Ollama model name.
+   */
+  localModel?: string;
+  /**
+   * Path to a local GGUF model file.
+   */
+  modelPath?: string;
+  /**
+   * Use Ollama server instead of bundled inference.
+   */
+  useOllama?: boolean;
+  /**
+   * Ollama server URL (default: http://localhost:11434).
+   */
+  ollamaHost?: string;
+  /**
+   * Number of GPU layers to offload (default: auto).
+   */
+  gpuLayers?: number;
+  /**
+   * Context window size for local models (default: 32768).
+   */
+  contextSize?: number;
+  /**
+   * CPU threads for local inference (default: auto).
+   */
+  threads?: number;
 }
 
 export interface WikiAgentConfig {
@@ -692,29 +729,64 @@ export class ArchitecturalWikiAgent {
     const searchMode = this.ragSystem['index'] ? 'vector search' : 'keyword search';
     yield { type: 'step', message: `Loaded ${this.ragSystem.getDocumentCount()} chunks (${searchMode})` };
 
-    // Phase 3: Run direct API agent
-    yield { type: 'phase', message: 'Generating wiki (Direct API mode)', progress: 20 };
+    // Phase 3: Run direct API agent (or local mode)
+    const modeLabel = options.fullLocal ? 'Local Mode' : 'Direct API mode';
+    yield { type: 'phase', message: `Generating wiki (${modeLabel})`, progress: 20 };
 
-    const client = new Anthropic();
-    const model = options.model || 'claude-sonnet-4-20250514';
+    // Create the appropriate LLM provider
+    let provider: LLMProvider;
+    try {
+      provider = await createLLMProvider({
+        fullLocal: options.fullLocal,
+        useOllama: options.useOllama,
+        ollamaHost: options.ollamaHost,
+        localModel: options.localModel,
+        modelPath: options.modelPath,
+        gpuLayers: options.gpuLayers,
+        contextSize: options.contextSize,
+        threads: options.threads,
+        model: options.model,
+        apiKey: this.apiKey,
+      });
+    } catch (error) {
+      const err = error as Error;
+      yield { type: 'error', message: `Failed to initialize LLM provider: ${err.message}` };
+      return;
+    }
+
+    const modelInfo = provider.getModelInfo();
     const maxTurns = options.maxTurns || 200;
     const prompt = this.buildGenerationPrompt(options);
 
     // Define tools for the API
     const tools = this.buildDirectApiTools();
+    const llmTools: LLMTool[] = tools.map(t => ({
+      name: t.name,
+      description: t.description,
+      parameters: t.input_schema as any
+    }));
 
     console.log('\n' + '='.repeat(60));
-    console.log('[DirectAPI] Starting direct API mode');
-    console.log('[DirectAPI] Model:', model);
-    console.log('[DirectAPI] Max turns:', maxTurns);
-    console.log('[DirectAPI] Tools:', tools.length);
-    console.log('[DirectAPI] Repository:', this.repoPath);
-    console.log('[DirectAPI] Output:', this.outputDir);
-    console.log('[DirectAPI] Chunks:', this.ragSystem.getDocumentCount());
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Starting ${modeLabel}`);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Model:`, modelInfo.name);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Max turns:`, maxTurns);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Tools:`, tools.length);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Repository:`, this.repoPath);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Output:`, this.outputDir);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Chunks:`, this.ragSystem.getDocumentCount());
+    if (options.fullLocal) {
+      console.log(`[Local] Context size:`, modelInfo.contextLength);
+      console.log(`[Local] Local inference:`, modelInfo.isLocal ? 'Yes' : 'No');
+    }
     console.log('='.repeat(60) + '\n');
 
-    // Build initial messages
-    const messages: Anthropic.MessageParam[] = [
+    // Build initial messages for our abstraction
+    const messages: LLMMessage[] = [
+      { role: 'user', content: prompt }
+    ];
+
+    // Also keep Anthropic format for backwards compatibility when not in local mode
+    const anthropicMessages: Anthropic.MessageParam[] = [
       { role: 'user', content: prompt }
     ];
 
@@ -729,83 +801,116 @@ export class ArchitecturalWikiAgent {
         yield { type: 'step', message: `Turn ${turnCount}/${maxTurns}`, progress };
 
         if (options.verbose) {
-          console.log(`\n[DirectAPI] === Turn ${turnCount} ===`);
+          console.log(`\n[${options.fullLocal ? 'Local' : 'DirectAPI'}] === Turn ${turnCount} ===`);
         }
 
-        // Call the API
-        const response = await client.messages.create({
-          model,
-          max_tokens: 8192,
-          system: WIKI_SYSTEM_PROMPT,
-          tools,
-          messages
+        // Call the LLM provider
+        const response = await provider.chat(messages, llmTools, {
+          maxTokens: 8192,
+          systemPrompt: WIKI_SYSTEM_PROMPT,
+          temperature: 0.7,
         });
 
         if (options.verbose) {
-          console.log(`[DirectAPI] Stop reason: ${response.stop_reason}`);
-          console.log(`[DirectAPI] Usage: input=${response.usage.input_tokens}, output=${response.usage.output_tokens}`);
+          console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Stop reason: ${response.stopReason}`);
+          console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Usage: input=${response.usage.inputTokens}, output=${response.usage.outputTokens}`);
         }
 
         // Process response content
         const assistantContent: Anthropic.ContentBlock[] = [];
         const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = [];
 
-        for (const block of response.content) {
-          assistantContent.push(block);
-
-          if (block.type === 'text') {
-            if (options.verbose) {
-              console.log(`[DirectAPI] Text: ${block.text.slice(0, 200)}${block.text.length > 200 ? '...' : ''}`);
-            }
-            yield { type: 'assistant', content: block.text };
-          } else if (block.type === 'tool_use') {
-            totalToolCalls++;
-            if (options.verbose) {
-              console.log(`[DirectAPI] Tool call #${totalToolCalls}: ${block.name}`);
-              console.log(`[DirectAPI] Input: ${JSON.stringify(block.input).slice(0, 200)}`);
-            }
-
-            // Execute the tool
-            const result = await this.executeDirectApiTool(block.name, block.input as Record<string, any>);
-
-            if (options.verbose) {
-              console.log(`[DirectAPI] Result: ${result.slice(0, 200)}${result.length > 200 ? '...' : ''}`);
-            }
-
-            toolResults.push({
-              type: 'tool_result',
-              tool_use_id: block.id,
-              content: result
-            });
+        // Handle text content
+        if (response.content) {
+          assistantContent.push({ type: 'text', text: response.content });
+          if (options.verbose) {
+            console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Text: ${response.content.slice(0, 200)}${response.content.length > 200 ? '...' : ''}`);
           }
+          yield { type: 'assistant', content: response.content };
         }
 
-        // Add assistant message
-        messages.push({ role: 'assistant', content: assistantContent });
+        // Handle tool calls
+        for (const toolCall of response.toolCalls) {
+          totalToolCalls++;
+          if (options.verbose) {
+            console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Tool call #${totalToolCalls}: ${toolCall.name}`);
+            console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Input: ${JSON.stringify(toolCall.arguments).slice(0, 200)}`);
+          }
+
+          // Add tool use to assistant content
+          assistantContent.push({
+            type: 'tool_use',
+            id: toolCall.id,
+            name: toolCall.name,
+            input: toolCall.arguments
+          });
+
+          // Execute the tool
+          const result = await this.executeDirectApiTool(toolCall.name, toolCall.arguments as Record<string, any>);
+
+          if (options.verbose) {
+            console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Result: ${result.slice(0, 200)}${result.length > 200 ? '...' : ''}`);
+          }
+
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: toolCall.id,
+            content: result
+          });
+        }
+
+        // Add assistant message with text and tool uses
+        const assistantMsg: LLMMessage = {
+          role: 'assistant',
+          content: assistantContent.map(block => {
+            if (block.type === 'text') {
+              return { type: 'text' as const, text: block.text };
+            } else if (block.type === 'tool_use') {
+              return {
+                type: 'tool_use' as const,
+                id: block.id,
+                name: block.name,
+                input: block.input as Record<string, unknown>
+              };
+            }
+            return block;
+          })
+        };
+        messages.push(assistantMsg);
 
         // If there were tool uses, add results and continue
         if (toolResults.length > 0) {
-          messages.push({ role: 'user', content: toolResults });
+          const toolResultMsg: LLMMessage = {
+            role: 'user',
+            content: toolResults.map(r => ({
+              type: 'tool_result' as const,
+              tool_use_id: r.tool_use_id,
+              content: r.content
+            }))
+          };
+          messages.push(toolResultMsg);
         }
 
         // Check if we're done
-        if (response.stop_reason === 'end_turn' && toolResults.length === 0) {
+        const logPrefix = options.fullLocal ? 'Local' : 'DirectAPI';
+        if (response.stopReason === 'end_turn' && toolResults.length === 0) {
           done = true;
-          console.log(`[DirectAPI] Agent finished naturally after ${turnCount} turns`);
-        } else if (response.stop_reason === 'max_tokens') {
-          console.log(`[DirectAPI] Warning: Hit max_tokens, continuing...`);
+          console.log(`[${logPrefix}] Agent finished naturally after ${turnCount} turns`);
+        } else if (response.stopReason === 'max_tokens') {
+          console.log(`[${logPrefix}] Warning: Hit max_tokens, continuing...`);
         }
       }
 
+      const logPrefix = options.fullLocal ? 'Local' : 'DirectAPI';
       if (!done && turnCount >= maxTurns) {
-        console.log(`[DirectAPI] Warning: Reached max turns (${maxTurns})`);
+        console.log(`[${logPrefix}] Warning: Reached max turns (${maxTurns})`);
         yield { type: 'error', message: `Reached maximum turns (${maxTurns})` };
       }
 
       console.log('\n' + '='.repeat(60));
-      console.log('[DirectAPI] Initial generation complete');
-      console.log(`[DirectAPI] Total turns: ${turnCount}`);
-      console.log(`[DirectAPI] Total tool calls: ${totalToolCalls}`);
+      console.log(`[${logPrefix}] Initial generation complete`);
+      console.log(`[${logPrefix}] Total turns: ${turnCount}`);
+      console.log(`[${logPrefix}] Total tool calls: ${totalToolCalls}`);
       console.log('='.repeat(60) + '\n');
 
       // Phase 4: Verification loop - keep generating until all links are valid
@@ -833,7 +938,7 @@ export class ArchitecturalWikiAgent {
 
         // Get unique missing pages
         const missingPages = [...new Set(verification.brokenLinks.map(l => l.target))];
-        console.log(`[DirectAPI] Missing pages: ${missingPages.join(', ')}`);
+        console.log(`[${logPrefix}] Missing pages: ${missingPages.join(', ')}`);
 
         // Generate missing pages
         const continuationPrompt = `Continue generating wiki pages. The following pages are referenced but do not exist:
@@ -848,8 +953,8 @@ For EACH missing page:
 Remember: Every architectural concept MUST include file:line references to the source code.
 Create all ${missingPages.length} missing pages now.`;
 
-        // Reset for continuation
-        const continuationMessages: Anthropic.MessageParam[] = [
+        // Reset for continuation using LLM provider format
+        const continuationMessages: LLMMessage[] = [
           { role: 'user', content: continuationPrompt }
         ];
 
@@ -860,67 +965,84 @@ Create all ${missingPages.length} missing pages now.`;
           continuationTurns++;
           turnCount++;
 
-          const response = await client.messages.create({
-            model,
-            max_tokens: 8192,
-            system: WIKI_SYSTEM_PROMPT,
-            tools,
-            messages: continuationMessages
+          const response = await provider.chat(continuationMessages, llmTools, {
+            maxTokens: 8192,
+            systemPrompt: WIKI_SYSTEM_PROMPT,
+            temperature: 0.7,
           });
 
           if (options.verbose) {
-            console.log(`[DirectAPI] Continuation turn ${continuationTurns}: ${response.stop_reason}`);
+            console.log(`[${logPrefix}] Continuation turn ${continuationTurns}: ${response.stopReason}`);
           }
 
-          const assistantContent: Anthropic.ContentBlock[] = [];
+          const assistantContentBlocks: Array<{ type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }> = [];
           const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = [];
 
-          for (const block of response.content) {
-            assistantContent.push(block);
+          // Handle text content
+          if (response.content) {
+            assistantContentBlocks.push({ type: 'text', text: response.content });
+          }
 
-            if (block.type === 'tool_use') {
-              totalToolCalls++;
-              const result = await this.executeDirectApiTool(block.name, block.input as Record<string, any>);
-              toolResults.push({
-                type: 'tool_result',
-                tool_use_id: block.id,
-                content: result
-              });
+          // Handle tool calls
+          for (const toolCall of response.toolCalls) {
+            totalToolCalls++;
+            assistantContentBlocks.push({
+              type: 'tool_use',
+              id: toolCall.id,
+              name: toolCall.name,
+              input: toolCall.arguments
+            });
 
-              if (options.verbose) {
-                console.log(`[DirectAPI] Tool: ${block.name}`);
-              }
+            const result = await this.executeDirectApiTool(toolCall.name, toolCall.arguments as Record<string, any>);
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: toolCall.id,
+              content: result
+            });
+
+            if (options.verbose) {
+              console.log(`[${logPrefix}] Tool: ${toolCall.name}`);
             }
           }
 
-          continuationMessages.push({ role: 'assistant', content: assistantContent });
+          continuationMessages.push({ role: 'assistant', content: assistantContentBlocks });
 
           if (toolResults.length > 0) {
-            continuationMessages.push({ role: 'user', content: toolResults });
+            continuationMessages.push({
+              role: 'user',
+              content: toolResults.map(r => ({
+                type: 'tool_result' as const,
+                tool_use_id: r.tool_use_id,
+                content: r.content
+              }))
+            });
           }
 
-          if (response.stop_reason === 'end_turn' && toolResults.length === 0) {
+          if (response.stopReason === 'end_turn' && toolResults.length === 0) {
             break;
           }
         }
       }
 
       if (verificationAttempts >= maxVerificationAttempts) {
-        console.log(`[DirectAPI] Warning: Max verification attempts (${maxVerificationAttempts}) reached`);
+        console.log(`[${logPrefix}] Warning: Max verification attempts (${maxVerificationAttempts}) reached`);
         const finalCheck = await this.verifyWikiCompleteness(this.outputDir);
         if (!finalCheck.isComplete) {
-          console.log(`[DirectAPI] ${finalCheck.brokenLinks.length} broken links remain`);
+          console.log(`[${logPrefix}] ${finalCheck.brokenLinks.length} broken links remain`);
           yield { type: 'step', message: `Warning: ${finalCheck.brokenLinks.length} broken links remain`, progress: 95 };
         }
       }
 
+      // Shutdown the provider
+      await provider.shutdown();
+
       console.log('\n' + '='.repeat(60));
-      console.log('[DirectAPI] GENERATION COMPLETE');
-      console.log(`[DirectAPI] Total turns: ${turnCount}`);
-      console.log(`[DirectAPI] Total tool calls: ${totalToolCalls}`);
+      console.log(`[${logPrefix}] GENERATION COMPLETE`);
+      console.log(`[${logPrefix}] Total turns: ${turnCount}`);
+      console.log(`[${logPrefix}] Total tool calls: ${totalToolCalls}`);
       console.log('='.repeat(60) + '\n');
 
-      yield { type: 'complete', message: 'Wiki generation complete (Direct API)', progress: 100 };
+      yield { type: 'complete', message: `Wiki generation complete (${modeLabel})`, progress: 100 };
     } catch (err: any) {
       console.error('[DirectAPI] Error:', err.message);
       if (options.verbose) {
