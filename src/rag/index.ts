@@ -166,7 +166,13 @@ const EXCLUDE_PATTERNS = [
   '**/*.bundle.js',
   '**/package-lock.json',
   '**/yarn.lock',
-  '**/pnpm-lock.yaml'
+  '**/pnpm-lock.yaml',
+  // Content/blog directories - not architectural source code
+  '**/posts/**',
+  '**/blog/**',
+  '**/content/**',
+  '**/articles/**',
+  '**/_posts/**',
 ];
 
 export class RAGSystem {

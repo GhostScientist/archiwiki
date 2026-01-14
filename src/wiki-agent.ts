@@ -9,6 +9,7 @@ import { PermissionManager } from './permissions.js';
 import { MCPConfigManager } from './mcp-config.js';
 import { RAGSystem } from './rag/index.js';
 import { WIKI_SYSTEM_PROMPT } from './prompts/wiki-system.js';
+import { createLLMProvider, type LLMProvider, type LLMMessage, type LLMTool } from './llm/index.js';
 
 export interface WikiGenerationOptions {
   repoUrl: string;
@@ -48,6 +49,46 @@ export interface WikiGenerationOptions {
    * Uses your ANTHROPIC_API_KEY credits directly.
    */
   directApi?: boolean;
+
+  // Local mode options
+  /**
+   * Run entirely locally without cloud APIs.
+   * Uses node-llama-cpp for in-process inference.
+   */
+  fullLocal?: boolean;
+  /**
+   * Local model to use (default: auto-selected based on hardware).
+   * Can be a model ID from registry or an Ollama model name.
+   */
+  localModel?: string;
+  /**
+   * Model family for local mode. Currently only 'gpt-oss' (21B) is supported.
+   */
+  modelFamily?: 'gpt-oss';
+  /**
+   * Path to a local GGUF model file.
+   */
+  modelPath?: string;
+  /**
+   * Use Ollama server instead of bundled inference.
+   */
+  useOllama?: boolean;
+  /**
+   * Ollama server URL (default: http://localhost:11434).
+   */
+  ollamaHost?: string;
+  /**
+   * Number of GPU layers to offload (default: auto).
+   */
+  gpuLayers?: number;
+  /**
+   * Context window size for local models (default: 32768).
+   */
+  contextSize?: number;
+  /**
+   * CPU threads for local inference (default: auto).
+   */
+  threads?: number;
 }
 
 export interface WikiAgentConfig {
@@ -84,6 +125,32 @@ export interface GenerationEstimate {
   breakdown: {
     byExtension: Record<string, number>;
     largestFiles: Array<{ path: string; size: number }>;
+  };
+}
+
+export interface LocalGenerationEstimate extends GenerationEstimate {
+  isLocal: true;
+  hardware: {
+    gpuVendor: string;
+    gpuName?: string;
+    gpuVram: number;
+    systemRam: number;
+    cpuCores: number;
+  };
+  recommendedModel: {
+    modelId: string;
+    quality: string;
+    fileSizeGb: number;
+    contextLength: number;
+    minVram: number;
+    downloaded: boolean;
+  };
+  localEstimate: {
+    tokensPerSecond: number;
+    generationMinutes: number;
+    downloadRequired: boolean;
+    downloadSizeGb: number;
+    diskSpaceRequired: number;
   };
 }
 
@@ -692,29 +759,66 @@ export class ArchitecturalWikiAgent {
     const searchMode = this.ragSystem['index'] ? 'vector search' : 'keyword search';
     yield { type: 'step', message: `Loaded ${this.ragSystem.getDocumentCount()} chunks (${searchMode})` };
 
-    // Phase 3: Run direct API agent
-    yield { type: 'phase', message: 'Generating wiki (Direct API mode)', progress: 20 };
+    // Phase 3: Run direct API agent (or local mode)
+    const modeLabel = options.fullLocal ? 'Local Mode' : 'Direct API mode';
+    yield { type: 'phase', message: `Generating wiki (${modeLabel})`, progress: 20 };
 
-    const client = new Anthropic();
-    const model = options.model || 'claude-sonnet-4-20250514';
+    // Create the appropriate LLM provider
+    let provider: LLMProvider;
+    try {
+      provider = await createLLMProvider({
+        fullLocal: options.fullLocal,
+        useOllama: options.useOllama,
+        ollamaHost: options.ollamaHost,
+        localModel: options.localModel,
+        modelFamily: options.modelFamily,
+        modelPath: options.modelPath,
+        gpuLayers: options.gpuLayers,
+        contextSize: options.contextSize,
+        threads: options.threads,
+        model: options.model,
+        apiKey: this.config.apiKey,
+        verbose: options.verbose,
+      });
+    } catch (error) {
+      const err = error as Error;
+      yield { type: 'error', message: `Failed to initialize LLM provider: ${err.message}` };
+      return;
+    }
+
+    const modelInfo = provider.getModelInfo();
     const maxTurns = options.maxTurns || 200;
     const prompt = this.buildGenerationPrompt(options);
 
     // Define tools for the API
     const tools = this.buildDirectApiTools();
+    const llmTools: LLMTool[] = tools.map(t => ({
+      name: t.name,
+      description: t.description || '',
+      parameters: t.input_schema as any
+    }));
 
     console.log('\n' + '='.repeat(60));
-    console.log('[DirectAPI] Starting direct API mode');
-    console.log('[DirectAPI] Model:', model);
-    console.log('[DirectAPI] Max turns:', maxTurns);
-    console.log('[DirectAPI] Tools:', tools.length);
-    console.log('[DirectAPI] Repository:', this.repoPath);
-    console.log('[DirectAPI] Output:', this.outputDir);
-    console.log('[DirectAPI] Chunks:', this.ragSystem.getDocumentCount());
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Starting ${modeLabel}`);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Model:`, modelInfo.name);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Max turns:`, maxTurns);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Tools:`, tools.length);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Repository:`, this.repoPath);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Output:`, this.outputDir);
+    console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Chunks:`, this.ragSystem.getDocumentCount());
+    if (options.fullLocal) {
+      console.log(`[Local] Context size:`, modelInfo.contextLength);
+      console.log(`[Local] Local inference:`, modelInfo.isLocal ? 'Yes' : 'No');
+    }
     console.log('='.repeat(60) + '\n');
 
-    // Build initial messages
-    const messages: Anthropic.MessageParam[] = [
+    // Build initial messages for our abstraction
+    const messages: LLMMessage[] = [
+      { role: 'user', content: prompt }
+    ];
+
+    // Also keep Anthropic format for backwards compatibility when not in local mode
+    const anthropicMessages: Anthropic.MessageParam[] = [
       { role: 'user', content: prompt }
     ];
 
@@ -729,83 +833,122 @@ export class ArchitecturalWikiAgent {
         yield { type: 'step', message: `Turn ${turnCount}/${maxTurns}`, progress };
 
         if (options.verbose) {
-          console.log(`\n[DirectAPI] === Turn ${turnCount} ===`);
+          console.log(`\n[${options.fullLocal ? 'Local' : 'DirectAPI'}] === Turn ${turnCount} ===`);
         }
 
-        // Call the API
-        const response = await client.messages.create({
-          model,
-          max_tokens: 8192,
-          system: WIKI_SYSTEM_PROMPT,
-          tools,
-          messages
+        // Call the LLM provider
+        const response = await provider.chat(messages, llmTools, {
+          maxTokens: 8192,
+          systemPrompt: WIKI_SYSTEM_PROMPT,
+          temperature: 0.7,
         });
 
         if (options.verbose) {
-          console.log(`[DirectAPI] Stop reason: ${response.stop_reason}`);
-          console.log(`[DirectAPI] Usage: input=${response.usage.input_tokens}, output=${response.usage.output_tokens}`);
+          console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Stop reason: ${response.stopReason}`);
+          console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Usage: input=${response.usage.inputTokens}, output=${response.usage.outputTokens}`);
         }
 
-        // Process response content
-        const assistantContent: Anthropic.ContentBlock[] = [];
+        // Process response content - use explicit type for our content blocks
+        type LocalContentBlock =
+          | { type: 'text'; text: string }
+          | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
+
+        const assistantContent: LocalContentBlock[] = [];
         const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = [];
 
-        for (const block of response.content) {
-          assistantContent.push(block);
-
-          if (block.type === 'text') {
-            if (options.verbose) {
-              console.log(`[DirectAPI] Text: ${block.text.slice(0, 200)}${block.text.length > 200 ? '...' : ''}`);
-            }
-            yield { type: 'assistant', content: block.text };
-          } else if (block.type === 'tool_use') {
-            totalToolCalls++;
-            if (options.verbose) {
-              console.log(`[DirectAPI] Tool call #${totalToolCalls}: ${block.name}`);
-              console.log(`[DirectAPI] Input: ${JSON.stringify(block.input).slice(0, 200)}`);
-            }
-
-            // Execute the tool
-            const result = await this.executeDirectApiTool(block.name, block.input as Record<string, any>);
-
-            if (options.verbose) {
-              console.log(`[DirectAPI] Result: ${result.slice(0, 200)}${result.length > 200 ? '...' : ''}`);
-            }
-
-            toolResults.push({
-              type: 'tool_result',
-              tool_use_id: block.id,
-              content: result
-            });
+        // Handle text content
+        if (response.content) {
+          assistantContent.push({ type: 'text', text: response.content });
+          if (options.verbose) {
+            console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Text: ${response.content.slice(0, 200)}${response.content.length > 200 ? '...' : ''}`);
           }
+          yield { type: 'assistant', content: response.content };
         }
 
-        // Add assistant message
-        messages.push({ role: 'assistant', content: assistantContent });
+        // Handle tool calls
+        for (const toolCall of response.toolCalls) {
+          totalToolCalls++;
+          if (options.verbose) {
+            console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Tool call #${totalToolCalls}: ${toolCall.name}`);
+            console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Input: ${JSON.stringify(toolCall.arguments).slice(0, 200)}`);
+          }
+
+          // Add tool use to assistant content
+          assistantContent.push({
+            type: 'tool_use',
+            id: toolCall.id,
+            name: toolCall.name,
+            input: toolCall.arguments as Record<string, unknown>
+          });
+
+          // Execute the tool
+          const result = await this.executeDirectApiTool(toolCall.name, toolCall.arguments as Record<string, any>);
+
+          if (options.verbose) {
+            console.log(`[${options.fullLocal ? 'Local' : 'DirectAPI'}] Result: ${result.slice(0, 200)}${result.length > 200 ? '...' : ''}`);
+          }
+
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: toolCall.id,
+            content: result
+          });
+        }
+
+        // Add assistant message with text and tool uses
+        // Map to our ContentBlock types from ./llm/types
+        const mappedContent = assistantContent.map(block => {
+          if (block.type === 'text') {
+            return { type: 'text' as const, text: block.text };
+          } else {
+            return {
+              type: 'tool_use' as const,
+              id: block.id,
+              name: block.name,
+              input: block.input
+            };
+          }
+        });
+
+        const assistantMsg: LLMMessage = {
+          role: 'assistant',
+          content: mappedContent
+        };
+        messages.push(assistantMsg);
 
         // If there were tool uses, add results and continue
         if (toolResults.length > 0) {
-          messages.push({ role: 'user', content: toolResults });
+          const toolResultMsg: LLMMessage = {
+            role: 'user',
+            content: toolResults.map(r => ({
+              type: 'tool_result' as const,
+              tool_use_id: r.tool_use_id,
+              content: r.content
+            }))
+          };
+          messages.push(toolResultMsg);
         }
 
         // Check if we're done
-        if (response.stop_reason === 'end_turn' && toolResults.length === 0) {
+        const logPrefix = options.fullLocal ? 'Local' : 'DirectAPI';
+        if (response.stopReason === 'end_turn' && toolResults.length === 0) {
           done = true;
-          console.log(`[DirectAPI] Agent finished naturally after ${turnCount} turns`);
-        } else if (response.stop_reason === 'max_tokens') {
-          console.log(`[DirectAPI] Warning: Hit max_tokens, continuing...`);
+          console.log(`[${logPrefix}] Agent finished naturally after ${turnCount} turns`);
+        } else if (response.stopReason === 'max_tokens') {
+          console.log(`[${logPrefix}] Warning: Hit max_tokens, continuing...`);
         }
       }
 
+      const logPrefix = options.fullLocal ? 'Local' : 'DirectAPI';
       if (!done && turnCount >= maxTurns) {
-        console.log(`[DirectAPI] Warning: Reached max turns (${maxTurns})`);
+        console.log(`[${logPrefix}] Warning: Reached max turns (${maxTurns})`);
         yield { type: 'error', message: `Reached maximum turns (${maxTurns})` };
       }
 
       console.log('\n' + '='.repeat(60));
-      console.log('[DirectAPI] Initial generation complete');
-      console.log(`[DirectAPI] Total turns: ${turnCount}`);
-      console.log(`[DirectAPI] Total tool calls: ${totalToolCalls}`);
+      console.log(`[${logPrefix}] Initial generation complete`);
+      console.log(`[${logPrefix}] Total turns: ${turnCount}`);
+      console.log(`[${logPrefix}] Total tool calls: ${totalToolCalls}`);
       console.log('='.repeat(60) + '\n');
 
       // Phase 4: Verification loop - keep generating until all links are valid
@@ -833,7 +976,7 @@ export class ArchitecturalWikiAgent {
 
         // Get unique missing pages
         const missingPages = [...new Set(verification.brokenLinks.map(l => l.target))];
-        console.log(`[DirectAPI] Missing pages: ${missingPages.join(', ')}`);
+        console.log(`[${logPrefix}] Missing pages: ${missingPages.join(', ')}`);
 
         // Generate missing pages
         const continuationPrompt = `Continue generating wiki pages. The following pages are referenced but do not exist:
@@ -848,8 +991,8 @@ For EACH missing page:
 Remember: Every architectural concept MUST include file:line references to the source code.
 Create all ${missingPages.length} missing pages now.`;
 
-        // Reset for continuation
-        const continuationMessages: Anthropic.MessageParam[] = [
+        // Reset for continuation using LLM provider format
+        const continuationMessages: LLMMessage[] = [
           { role: 'user', content: continuationPrompt }
         ];
 
@@ -860,67 +1003,84 @@ Create all ${missingPages.length} missing pages now.`;
           continuationTurns++;
           turnCount++;
 
-          const response = await client.messages.create({
-            model,
-            max_tokens: 8192,
-            system: WIKI_SYSTEM_PROMPT,
-            tools,
-            messages: continuationMessages
+          const response = await provider.chat(continuationMessages, llmTools, {
+            maxTokens: 8192,
+            systemPrompt: WIKI_SYSTEM_PROMPT,
+            temperature: 0.7,
           });
 
           if (options.verbose) {
-            console.log(`[DirectAPI] Continuation turn ${continuationTurns}: ${response.stop_reason}`);
+            console.log(`[${logPrefix}] Continuation turn ${continuationTurns}: ${response.stopReason}`);
           }
 
-          const assistantContent: Anthropic.ContentBlock[] = [];
+          const assistantContentBlocks: Array<{ type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }> = [];
           const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = [];
 
-          for (const block of response.content) {
-            assistantContent.push(block);
+          // Handle text content
+          if (response.content) {
+            assistantContentBlocks.push({ type: 'text', text: response.content });
+          }
 
-            if (block.type === 'tool_use') {
-              totalToolCalls++;
-              const result = await this.executeDirectApiTool(block.name, block.input as Record<string, any>);
-              toolResults.push({
-                type: 'tool_result',
-                tool_use_id: block.id,
-                content: result
-              });
+          // Handle tool calls
+          for (const toolCall of response.toolCalls) {
+            totalToolCalls++;
+            assistantContentBlocks.push({
+              type: 'tool_use',
+              id: toolCall.id,
+              name: toolCall.name,
+              input: toolCall.arguments
+            });
 
-              if (options.verbose) {
-                console.log(`[DirectAPI] Tool: ${block.name}`);
-              }
+            const result = await this.executeDirectApiTool(toolCall.name, toolCall.arguments as Record<string, any>);
+            toolResults.push({
+              type: 'tool_result',
+              tool_use_id: toolCall.id,
+              content: result
+            });
+
+            if (options.verbose) {
+              console.log(`[${logPrefix}] Tool: ${toolCall.name}`);
             }
           }
 
-          continuationMessages.push({ role: 'assistant', content: assistantContent });
+          continuationMessages.push({ role: 'assistant', content: assistantContentBlocks });
 
           if (toolResults.length > 0) {
-            continuationMessages.push({ role: 'user', content: toolResults });
+            continuationMessages.push({
+              role: 'user',
+              content: toolResults.map(r => ({
+                type: 'tool_result' as const,
+                tool_use_id: r.tool_use_id,
+                content: r.content
+              }))
+            });
           }
 
-          if (response.stop_reason === 'end_turn' && toolResults.length === 0) {
+          if (response.stopReason === 'end_turn' && toolResults.length === 0) {
             break;
           }
         }
       }
 
       if (verificationAttempts >= maxVerificationAttempts) {
-        console.log(`[DirectAPI] Warning: Max verification attempts (${maxVerificationAttempts}) reached`);
+        console.log(`[${logPrefix}] Warning: Max verification attempts (${maxVerificationAttempts}) reached`);
         const finalCheck = await this.verifyWikiCompleteness(this.outputDir);
         if (!finalCheck.isComplete) {
-          console.log(`[DirectAPI] ${finalCheck.brokenLinks.length} broken links remain`);
+          console.log(`[${logPrefix}] ${finalCheck.brokenLinks.length} broken links remain`);
           yield { type: 'step', message: `Warning: ${finalCheck.brokenLinks.length} broken links remain`, progress: 95 };
         }
       }
 
+      // Shutdown the provider
+      await provider.shutdown();
+
       console.log('\n' + '='.repeat(60));
-      console.log('[DirectAPI] GENERATION COMPLETE');
-      console.log(`[DirectAPI] Total turns: ${turnCount}`);
-      console.log(`[DirectAPI] Total tool calls: ${totalToolCalls}`);
+      console.log(`[${logPrefix}] GENERATION COMPLETE`);
+      console.log(`[${logPrefix}] Total turns: ${turnCount}`);
+      console.log(`[${logPrefix}] Total tool calls: ${totalToolCalls}`);
       console.log('='.repeat(60) + '\n');
 
-      yield { type: 'complete', message: 'Wiki generation complete (Direct API)', progress: 100 };
+      yield { type: 'complete', message: `Wiki generation complete (${modeLabel})`, progress: 100 };
     } catch (err: any) {
       console.error('[DirectAPI] Error:', err.message);
       if (options.verbose) {
@@ -929,6 +1089,1282 @@ Create all ${missingPages.length} missing pages now.`;
       yield { type: 'error', message: err.message };
       throw err;
     }
+  }
+
+  /**
+   * Generate wiki using local LLM with page-by-page approach.
+   * Simpler and more reliable than full agent loop for local models.
+   */
+  async *generateWikiLocalPageByPage(
+    options: WikiGenerationOptions
+  ): AsyncGenerator<ProgressEvent | any> {
+    currentGenerationOptions = options;
+
+    // Phase 1: Prepare repository
+    yield { type: 'phase', message: 'Preparing repository', progress: 0 };
+    this.repoPath = await this.prepareRepository(options.repoUrl, options.accessToken);
+    this.outputDir = path.resolve(options.outputDir);
+
+    if (!fs.existsSync(this.outputDir)) {
+      fs.mkdirSync(this.outputDir, { recursive: true });
+    }
+
+    // Phase 2: Index codebase (or load existing)
+    const cachePath = path.join(this.outputDir, '.ted-mosby-cache');
+    const metadataPath = path.join(cachePath, 'metadata.json');
+
+    if (options.skipIndex && fs.existsSync(metadataPath)) {
+      yield { type: 'phase', message: 'Loading existing index', progress: 10 };
+      this.ragSystem = new RAGSystem({
+        storePath: cachePath,
+        repoPath: this.repoPath
+      });
+      await this.ragSystem.loadMetadataOnly();
+    } else {
+      yield { type: 'phase', message: 'Indexing codebase', progress: 10 };
+      this.ragSystem = new RAGSystem({
+        storePath: cachePath,
+        repoPath: this.repoPath,
+        maxChunks: options.maxChunks
+      });
+      await this.ragSystem.indexRepository();
+    }
+
+    const searchMode = this.ragSystem['index'] ? 'vector search' : 'keyword search';
+    yield { type: 'step', message: `Loaded ${this.ragSystem.getDocumentCount()} chunks (${searchMode})` };
+
+    // Phase 3: Initialize local LLM provider
+    yield { type: 'phase', message: 'Initializing local LLM', progress: 15 };
+
+    let provider: LLMProvider;
+    try {
+      provider = await createLLMProvider({
+        fullLocal: true,
+        useOllama: options.useOllama,
+        ollamaHost: options.ollamaHost,
+        localModel: options.localModel,
+        modelFamily: options.modelFamily,
+        modelPath: options.modelPath,
+        gpuLayers: options.gpuLayers,
+        contextSize: options.contextSize,
+        threads: options.threads,
+        verbose: options.verbose,
+      });
+    } catch (error) {
+      const err = error as Error;
+      yield { type: 'error', message: `Failed to initialize local LLM: ${err.message}` };
+      return;
+    }
+
+    const modelInfo = provider.getModelInfo();
+    console.log('\n' + '='.repeat(60));
+    console.log('[Local] Page-by-Page Generation Mode');
+    console.log('[Local] Model:', modelInfo.name);
+    console.log('[Local] Context:', modelInfo.contextLength, 'tokens');
+    console.log('[Local] Repository:', this.repoPath);
+    console.log('[Local] Output:', this.outputDir);
+    console.log('='.repeat(60) + '\n');
+
+    // Phase 4: Use LLM to analyze project and determine pages to generate
+    yield { type: 'phase', message: 'Analyzing project with LLM', progress: 20 };
+
+    const pagesToGenerate = await this.analyzeProjectWithLLM(provider, options);
+    console.log(`[Local] Identified ${pagesToGenerate.length} pages to generate\n`);
+
+    // Phase 5: Generate each page one at a time
+    yield { type: 'phase', message: `Generating ${pagesToGenerate.length} wiki pages`, progress: 25 };
+
+    let pagesGenerated = 0;
+    let pagesFailed = 0;
+
+    for (const pageSpec of pagesToGenerate) {
+      const progress = 25 + ((pagesGenerated / pagesToGenerate.length) * 70);
+      yield { type: 'step', message: `Generating: ${pageSpec.title}`, progress };
+
+      console.log(`\n[Local] ─── Page ${pagesGenerated + 1}/${pagesToGenerate.length}: ${pageSpec.title} ───`);
+
+      try {
+        const content = await this.generateSinglePage(provider, pageSpec, pagesToGenerate, options);
+
+        if (content) {
+          // Write the page
+          const pagePath = path.join(this.outputDir, pageSpec.filename);
+          const pageDir = path.dirname(pagePath);
+          if (!fs.existsSync(pageDir)) {
+            fs.mkdirSync(pageDir, { recursive: true });
+          }
+          fs.writeFileSync(pagePath, content, 'utf-8');
+
+          console.log(`[Local] ✓ Generated: ${pageSpec.filename}`);
+          pagesGenerated++;
+          yield { type: 'file', message: pageSpec.filename, detail: pageSpec.title };
+        } else {
+          console.log(`[Local] ⚠ Empty content for: ${pageSpec.title}`);
+          pagesFailed++;
+        }
+      } catch (error) {
+        const err = error as Error;
+        console.error(`[Local] ✗ Failed: ${pageSpec.title} - ${err.message}`);
+        pagesFailed++;
+      }
+    }
+
+    // Phase 6: Verification loop - generate missing pages until all cross-links resolve
+    yield { type: 'phase', message: 'Verifying cross-links', progress: 85 };
+
+    const maxVerificationAttempts = 5;
+    let verificationAttempts = 0;
+    const generatedFilenames = new Set(pagesToGenerate.map(p => p.filename));
+
+    while (verificationAttempts < maxVerificationAttempts) {
+      verificationAttempts++;
+      const verification = await this.verifyWikiCompleteness(this.outputDir);
+
+      console.log(`[Local] Verification #${verificationAttempts}: ${verification.totalPages} pages, ${verification.brokenLinks.length} broken links`);
+
+      if (verification.isComplete) {
+        console.log('[Local] ✓ Wiki is complete! All cross-links are valid.');
+        yield { type: 'step', message: 'All cross-links verified', progress: 90 };
+        break;
+      }
+
+      // Get unique missing pages we haven't generated yet
+      const missingPages = [...new Set(verification.brokenLinks.map(l => l.resolvedTarget))]
+        .filter(target => !generatedFilenames.has(target));
+
+      if (missingPages.length === 0) {
+        console.log('[Local] No new pages to generate, but some links remain broken');
+        break;
+      }
+
+      yield {
+        type: 'step',
+        message: `Found ${missingPages.length} missing pages, generating...`,
+        progress: 85 + verificationAttempts
+      };
+
+      // Generate missing pages
+      for (const missingFile of missingPages.slice(0, 5)) { // Limit to 5 per iteration
+        const pageName = path.basename(missingFile, '.md');
+        const pageTitle = this.formatDirectoryName(pageName);
+
+        console.log(`[Local] ─── Generating missing page: ${pageTitle} ───`);
+
+        // Find broken links that reference this page to get context
+        const referencingLinks = verification.brokenLinks.filter(l => l.resolvedTarget === missingFile);
+        const linkContexts = referencingLinks.map(l => l.linkText).join(', ');
+
+        const missingPageSpec = {
+          title: pageTitle,
+          filename: missingFile,
+          type: 'module' as const,
+          context: `Documentation for ${pageTitle}. Referenced from: ${linkContexts || 'other pages'}`,
+          sourceFiles: [] as string[],
+        };
+
+        // Try to find relevant source files for this page
+        const sourceFiles = await this.scanSourceFiles(this.repoPath);
+        const relevantFiles = sourceFiles.filter(f =>
+          f.toLowerCase().includes(pageName.toLowerCase()) ||
+          path.basename(f, path.extname(f)).toLowerCase() === pageName.toLowerCase()
+        );
+        missingPageSpec.sourceFiles = relevantFiles.slice(0, 10);
+
+        try {
+          const content = await this.generateSinglePage(
+            provider,
+            missingPageSpec,
+            [...pagesToGenerate, missingPageSpec],
+            options
+          );
+
+          if (content) {
+            const pagePath = path.join(this.outputDir, missingFile);
+            const pageDir = path.dirname(pagePath);
+            if (!fs.existsSync(pageDir)) {
+              fs.mkdirSync(pageDir, { recursive: true });
+            }
+            fs.writeFileSync(pagePath, content, 'utf-8');
+
+            console.log(`[Local] ✓ Generated missing page: ${missingFile}`);
+            pagesGenerated++;
+            generatedFilenames.add(missingFile);
+            pagesToGenerate.push(missingPageSpec);
+            yield { type: 'file', message: missingFile, detail: pageTitle };
+          }
+        } catch (error) {
+          console.error(`[Local] ✗ Failed to generate missing page: ${missingFile}`);
+          pagesFailed++;
+        }
+      }
+    }
+
+    if (verificationAttempts >= maxVerificationAttempts) {
+      const finalCheck = await this.verifyWikiCompleteness(this.outputDir);
+      if (!finalCheck.isComplete) {
+        console.log(`[Local] ⚠ Max verification attempts reached. ${finalCheck.brokenLinks.length} broken links remain.`);
+        yield { type: 'step', message: `Warning: ${finalCheck.brokenLinks.length} broken links remain`, progress: 90 };
+      }
+    }
+
+    // Phase 7: Generate index page
+    yield { type: 'phase', message: 'Generating index page', progress: 95 };
+
+    try {
+      const indexContent = await this.generateIndexPage(provider, pagesToGenerate, options);
+      if (indexContent) {
+        fs.writeFileSync(path.join(this.outputDir, 'index.md'), indexContent, 'utf-8');
+        console.log(`[Local] ✓ Generated: index.md`);
+      }
+    } catch (error) {
+      console.error(`[Local] ✗ Failed to generate index page`);
+    }
+
+    // Shutdown provider
+    await provider.shutdown();
+
+    console.log('\n' + '='.repeat(60));
+    console.log('[Local] GENERATION COMPLETE');
+    console.log(`[Local] Pages generated: ${pagesGenerated}`);
+    console.log(`[Local] Pages failed: ${pagesFailed}`);
+    console.log('='.repeat(60) + '\n');
+
+    yield { type: 'complete', message: `Local generation complete: ${pagesGenerated} pages`, progress: 100 };
+  }
+
+  /**
+   * Use LLM to intelligently analyze project files and determine what pages to generate.
+   * This is project-agnostic and doesn't rely on hardcoded patterns.
+   */
+  private async analyzeProjectWithLLM(
+    provider: LLMProvider,
+    options: WikiGenerationOptions
+  ): Promise<Array<{
+    title: string;
+    filename: string;
+    type: 'overview' | 'component' | 'api' | 'guide' | 'module' | 'config';
+    context: string;
+    sourceFiles: string[];
+  }>> {
+    // 1. Gather all files with metadata
+    const allFiles = await this.gatherProjectFiles(this.repoPath);
+    console.log(`[Local] Gathered ${allFiles.length} project files for LLM analysis`);
+
+    // 2. Build a compact representation for the LLM
+    const fileList = allFiles.map(f => {
+      const sizeLabel = f.size < 1000 ? 'small' : f.size < 10000 ? 'medium' : 'large';
+      return `${f.relativePath} (${f.extension}, ${sizeLabel})`;
+    }).join('\n');
+
+    // 3. Ask LLM to analyze and categorize files
+    const analysisPrompt = `You are analyzing a software project to create architectural documentation.
+
+## Project Files
+${fileList}
+
+## Task
+Analyze these files and return a JSON object that identifies:
+1. Which files are architecturally important (core application logic, not content/data)
+2. How to group them into documentation pages
+
+Return ONLY valid JSON in this exact format:
+{
+  "projectType": "brief description of project type",
+  "pages": [
+    {
+      "title": "Page Title",
+      "filename": "page-slug.md",
+      "type": "overview|component|api|guide|module|config",
+      "context": "What this page documents and why it's important",
+      "files": ["path/to/file1.ts", "path/to/file2.ts"]
+    }
+  ],
+  "excludedPatterns": ["paths or patterns that are content/data, not architecture"]
+}
+
+## Guidelines
+- Focus on SOURCE CODE that defines the application's architecture
+- EXCLUDE: blog posts, markdown content, static assets, test fixtures, generated files
+- INCLUDE: components, services, utilities, configuration, API routes, state management
+- Create 5-15 pages depending on project complexity
+- Each page should have 2-10 related files
+- Always include an "Architecture Overview" page first
+- Group related functionality together (e.g., all auth files in one page)
+
+Return only the JSON, no markdown code blocks or explanation.`;
+
+    const messages: LLMMessage[] = [{ role: 'user', content: analysisPrompt }];
+
+    console.log(`[Local] Asking LLM to analyze project structure...`);
+
+    try {
+      const response = await provider.chat(messages, [], {
+        maxTokens: 4096,
+        systemPrompt: 'You are a software architect analyzing codebases. Return only valid JSON.',
+        temperature: 0.2, // Low temperature for structured output
+      });
+
+      if (!response.content) {
+        console.log(`[Local] LLM returned empty response, falling back to pattern-based analysis`);
+        return this.analyzeCodebaseForPages(options);
+      }
+
+      // Parse the JSON response
+      let analysis: {
+        projectType: string;
+        pages: Array<{
+          title: string;
+          filename: string;
+          type: string;
+          context: string;
+          files: string[];
+        }>;
+        excludedPatterns: string[];
+      };
+
+      try {
+        // Clean up response - remove markdown code blocks if present
+        let jsonStr = response.content.trim();
+        if (jsonStr.startsWith('```')) {
+          jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+        }
+        analysis = JSON.parse(jsonStr);
+      } catch (parseErr) {
+        console.log(`[Local] Failed to parse LLM response as JSON: ${(parseErr as Error).message}`);
+        console.log(`[Local] Response was: ${response.content.slice(0, 500)}...`);
+        return this.analyzeCodebaseForPages(options);
+      }
+
+      console.log(`[Local] LLM identified project as: ${analysis.projectType}`);
+      console.log(`[Local] LLM suggested ${analysis.pages.length} documentation pages`);
+
+      // Validate and filter the files (ensure they exist)
+      const existingFiles = new Set(allFiles.map(f => f.relativePath));
+      const validatedPages: Array<{
+        title: string;
+        filename: string;
+        type: 'overview' | 'component' | 'api' | 'guide' | 'module' | 'config';
+        context: string;
+        sourceFiles: string[];
+      }> = [];
+
+      for (const page of analysis.pages) {
+        const validFiles = (page.files || []).filter(f => existingFiles.has(f));
+
+        // Only include pages that have at least one valid file
+        if (validFiles.length > 0 || page.type === 'overview') {
+          validatedPages.push({
+            title: page.title,
+            filename: page.filename.endsWith('.md') ? page.filename : `${page.filename}.md`,
+            type: this.normalizePageType(page.type),
+            context: page.context,
+            sourceFiles: validFiles,
+          });
+        }
+      }
+
+      // Ensure we have an architecture overview
+      if (!validatedPages.some(p => p.type === 'overview')) {
+        const entryPoints = allFiles
+          .filter(f => this.isEntryPoint(f.relativePath))
+          .map(f => f.relativePath);
+
+        validatedPages.unshift({
+          title: 'Architecture Overview',
+          filename: 'architecture.md',
+          type: 'overview',
+          context: `High-level architecture of this ${analysis.projectType} project.`,
+          sourceFiles: entryPoints.slice(0, 10),
+        });
+      }
+
+      // Always add Getting Started
+      if (!validatedPages.some(p => p.title.toLowerCase().includes('getting started'))) {
+        validatedPages.push({
+          title: 'Getting Started',
+          filename: 'getting-started.md',
+          type: 'guide',
+          context: 'Installation, setup, and development workflow',
+          sourceFiles: allFiles
+            .filter(f => f.relativePath.includes('package.json') || f.relativePath.includes('README'))
+            .map(f => f.relativePath),
+        });
+      }
+
+      console.log(`[Local] Validated ${validatedPages.length} pages with existing files`);
+      return validatedPages;
+
+    } catch (error) {
+      console.error(`[Local] LLM analysis failed: ${(error as Error).message}`);
+      console.log(`[Local] Falling back to pattern-based analysis`);
+      return this.analyzeCodebaseForPages(options);
+    }
+  }
+
+  /**
+   * Gather all project files with metadata for LLM analysis
+   */
+  private async gatherProjectFiles(repoPath: string): Promise<Array<{
+    relativePath: string;
+    extension: string;
+    size: number;
+  }>> {
+    const files: Array<{ relativePath: string; extension: string; size: number }> = [];
+
+    const ignoreDirs = [
+      'node_modules', '.git', 'dist', 'build', '.next', 'coverage',
+      '__pycache__', 'venv', '.venv', 'vendor', '.cache', '.turbo'
+    ];
+
+    const scan = (dir: string, relativePath: string = '') => {
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          const relPath = path.join(relativePath, entry.name);
+
+          if (entry.isDirectory()) {
+            if (!ignoreDirs.includes(entry.name) && !entry.name.startsWith('.')) {
+              scan(fullPath, relPath);
+            }
+          } else if (entry.isFile()) {
+            const ext = path.extname(entry.name).toLowerCase();
+            // Include source files and some config files
+            const includeExts = [
+              '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+              '.py', '.go', '.rs', '.java', '.rb', '.php',
+              '.vue', '.svelte', '.json', '.yaml', '.yml', '.toml',
+              '.md', '.mdx', '.css', '.scss', '.less'
+            ];
+
+            if (includeExts.includes(ext)) {
+              try {
+                const stats = fs.statSync(fullPath);
+                files.push({
+                  relativePath: relPath,
+                  extension: ext,
+                  size: stats.size,
+                });
+              } catch {
+                // Skip files we can't stat
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore directories we can't read
+      }
+    };
+
+    scan(repoPath);
+    return files;
+  }
+
+  /**
+   * Check if a file is likely an entry point
+   */
+  private isEntryPoint(filePath: string): boolean {
+    const patterns = [
+      /^src\/index\.[tj]sx?$/,
+      /^src\/main\.[tj]sx?$/,
+      /^src\/app\.[tj]sx?$/,
+      /^src\/App\.[tj]sx?$/,
+      /^index\.[tj]sx?$/,
+      /^main\.[tj]sx?$/,
+      /package\.json$/,
+      /vite\.config\.[tj]s$/,
+      /next\.config\.[tj]s$/,
+    ];
+    return patterns.some(p => p.test(filePath));
+  }
+
+  /**
+   * Normalize page type to valid enum value
+   */
+  private normalizePageType(type: string): 'overview' | 'component' | 'api' | 'guide' | 'module' | 'config' {
+    const normalized = type.toLowerCase();
+    if (normalized === 'overview') return 'overview';
+    if (normalized === 'component' || normalized === 'components') return 'component';
+    if (normalized === 'api' || normalized === 'endpoint' || normalized === 'routes') return 'api';
+    if (normalized === 'guide' || normalized === 'tutorial' || normalized === 'getting-started') return 'guide';
+    if (normalized === 'config' || normalized === 'configuration') return 'config';
+    return 'module'; // Default fallback
+  }
+
+  /**
+   * Analyze codebase to determine which pages to generate dynamically.
+   * This is the fallback method using pattern-based analysis.
+   */
+  private async analyzeCodebaseForPages(options: WikiGenerationOptions): Promise<Array<{
+    title: string;
+    filename: string;
+    type: 'overview' | 'component' | 'api' | 'guide' | 'module' | 'config';
+    context: string;
+    sourceFiles: string[];
+  }>> {
+    const pages: Array<{
+      title: string;
+      filename: string;
+      type: 'overview' | 'component' | 'api' | 'guide' | 'module' | 'config';
+      context: string;
+      sourceFiles: string[];
+    }> = [];
+
+    // Get all source files by scanning the repository
+    const sourceFiles = await this.scanSourceFiles(this.repoPath);
+    console.log(`[Local] Found ${sourceFiles.length} source files to analyze`);
+
+    // Detect project type from package.json or other indicators
+    const projectType = await this.detectProjectType();
+    console.log(`[Local] Detected project type: ${projectType.type} (${projectType.framework || 'no framework'})`);
+
+    // 1. Architecture Overview (always included)
+    const entryPoints = this.findEntryPoints(sourceFiles, projectType);
+    pages.push({
+      title: 'Architecture Overview',
+      filename: 'architecture.md',
+      type: 'overview',
+      context: `High-level architecture of this ${projectType.type} project. Main entry points and how components interact.`,
+      sourceFiles: entryPoints.slice(0, 20),
+    });
+
+    // 2. Analyze directory structure intelligently
+    const dirAnalysis = this.analyzeDirectoryStructure(sourceFiles);
+
+    // Add pages for significant directories
+    for (const [dirPath, info] of dirAnalysis.entries()) {
+      if (info.files.length < 2) continue; // Skip trivial directories
+
+      const pageType = this.inferPageType(dirPath, info);
+      if (!pageType) continue;
+
+      pages.push({
+        title: pageType.title,
+        filename: pageType.filename,
+        type: pageType.type,
+        context: pageType.context,
+        sourceFiles: info.files.slice(0, 20),
+      });
+    }
+
+    // 3. Add specialized pages based on project patterns
+    // Use lower thresholds for smaller projects (< 50 files)
+    const isSmallProject = sourceFiles.length < 50;
+    const componentThreshold = isSmallProject ? 2 : 5;
+    const hookThreshold = isSmallProject ? 1 : 3;
+    const apiThreshold = isSmallProject ? 1 : 2;
+    const utilThreshold = isSmallProject ? 1 : 3;
+    const stateThreshold = isSmallProject ? 1 : 2;
+    const typeThreshold = isSmallProject ? 1 : 2;
+
+    // React/Vue/Svelte: Components page
+    const componentFiles = sourceFiles.filter(f =>
+      f.includes('/components/') ||
+      f.includes('/Components/') ||
+      (f.endsWith('.tsx') && !f.includes('/pages/'))
+    );
+    if (componentFiles.length >= componentThreshold && !pages.some(p => p.title.includes('Component'))) {
+      pages.push({
+        title: 'UI Components',
+        filename: 'components.md',
+        type: 'component',
+        context: 'Reusable UI components, their props, and usage patterns',
+        sourceFiles: componentFiles.slice(0, 20),
+      });
+    }
+
+    // Hooks (React)
+    const hookFiles = sourceFiles.filter(f =>
+      f.includes('/hooks/') ||
+      (f.includes('use') && f.endsWith('.ts'))
+    );
+    if (hookFiles.length >= hookThreshold) {
+      pages.push({
+        title: 'Custom Hooks',
+        filename: 'hooks.md',
+        type: 'module',
+        context: 'Custom React hooks, their purpose, and usage examples',
+        sourceFiles: hookFiles,
+      });
+    }
+
+    // API/Routes
+    const apiFiles = sourceFiles.filter(f =>
+      f.includes('/api/') ||
+      f.includes('/routes/') ||
+      f.includes('/endpoints/') ||
+      f.includes('router') ||
+      f.includes('handler')
+    );
+    if (apiFiles.length >= apiThreshold) {
+      pages.push({
+        title: 'API Reference',
+        filename: 'api.md',
+        type: 'api',
+        context: 'API endpoints, route handlers, and request/response formats',
+        sourceFiles: apiFiles.slice(0, 20),
+      });
+    }
+
+    // Utils/Helpers
+    const utilFiles = sourceFiles.filter(f =>
+      f.includes('/utils/') ||
+      f.includes('/helpers/') ||
+      f.includes('/lib/') ||
+      f.includes('util') ||
+      f.includes('helper')
+    );
+    if (utilFiles.length >= utilThreshold) {
+      pages.push({
+        title: 'Utilities & Helpers',
+        filename: 'utilities.md',
+        type: 'module',
+        context: 'Utility functions, helper modules, and shared logic',
+        sourceFiles: utilFiles.slice(0, 15),
+      });
+    }
+
+    // State Management
+    const stateFiles = sourceFiles.filter(f =>
+      f.includes('/store/') ||
+      f.includes('/state/') ||
+      f.includes('/redux/') ||
+      f.includes('/context/') ||
+      f.includes('store') ||
+      f.includes('slice')
+    );
+    if (stateFiles.length >= stateThreshold) {
+      pages.push({
+        title: 'State Management',
+        filename: 'state-management.md',
+        type: 'module',
+        context: 'Application state, stores, reducers, and data flow patterns',
+        sourceFiles: stateFiles,
+      });
+    }
+
+    // Types/Interfaces (TypeScript)
+    const typeFiles = sourceFiles.filter(f =>
+      f.includes('/types/') ||
+      f.includes('/interfaces/') ||
+      f.includes('.d.ts') ||
+      f.includes('types.ts')
+    );
+    if (typeFiles.length >= typeThreshold) {
+      pages.push({
+        title: 'Type Definitions',
+        filename: 'types.md',
+        type: 'module',
+        context: 'TypeScript types, interfaces, and type utilities',
+        sourceFiles: typeFiles,
+      });
+    }
+
+    // Pages/Views (for React/Vue apps with page-based routing)
+    const pageFiles = sourceFiles.filter(f =>
+      f.includes('/pages/') ||
+      f.includes('/views/') ||
+      f.includes('/screens/')
+    );
+    if (pageFiles.length >= 2) {
+      pages.push({
+        title: 'Pages & Routing',
+        filename: 'pages.md',
+        type: 'component',
+        context: 'Page components, routing structure, and navigation',
+        sourceFiles: pageFiles.slice(0, 20),
+      });
+    }
+
+    // For small projects, add individual page docs for key files
+    if (isSmallProject && sourceFiles.length > 5) {
+      // Find main application files that deserve their own page
+      const keyFiles = sourceFiles.filter(f => {
+        const basename = path.basename(f).toLowerCase();
+        return (
+          basename === 'app.tsx' ||
+          basename === 'app.ts' ||
+          basename === 'main.tsx' ||
+          basename === 'main.ts' ||
+          basename.includes('router') ||
+          basename.includes('provider') ||
+          basename.includes('context')
+        );
+      });
+
+      for (const keyFile of keyFiles.slice(0, 3)) {
+        const basename = path.basename(keyFile, path.extname(keyFile));
+        const title = this.formatDirectoryName(basename);
+        const filename = `${basename.toLowerCase()}.md`;
+
+        // Don't duplicate if we already have a page for this
+        if (!pages.some(p => p.filename === filename)) {
+          pages.push({
+            title: `${title} (Core)`,
+            filename,
+            type: 'module',
+            context: `Core application file: ${keyFile}. Entry point or main configuration.`,
+            sourceFiles: [keyFile],
+          });
+        }
+      }
+    }
+
+    // Configuration
+    const configFiles = sourceFiles.filter(f =>
+      f.includes('config') ||
+      f.includes('.config.') ||
+      f.endsWith('.json') ||
+      f.endsWith('.yaml') ||
+      f.endsWith('.yml') ||
+      f.endsWith('.toml')
+    );
+    if (configFiles.length >= 2) {
+      pages.push({
+        title: 'Configuration',
+        filename: 'configuration.md',
+        type: 'config',
+        context: 'Project configuration, environment setup, and build settings',
+        sourceFiles: configFiles.slice(0, 10),
+      });
+    }
+
+    // 4. Getting Started guide (always included)
+    const setupFiles = sourceFiles.filter(f =>
+      f.includes('package.json') ||
+      f.includes('README') ||
+      f.includes('CONTRIBUTING') ||
+      f.includes('setup') ||
+      f.includes('install')
+    );
+    pages.push({
+      title: 'Getting Started',
+      filename: 'getting-started.md',
+      type: 'guide',
+      context: 'Installation, setup, development workflow, and quick start guide',
+      sourceFiles: [...setupFiles, ...entryPoints.slice(0, 5)],
+    });
+
+    // Remove duplicates (by filename)
+    const seen = new Set<string>();
+    const uniquePages = pages.filter(p => {
+      if (seen.has(p.filename)) return false;
+      seen.add(p.filename);
+      return true;
+    });
+
+    console.log(`[Local] Generated ${uniquePages.length} page specs for this project`);
+    return uniquePages;
+  }
+
+  /**
+   * Detect the project type from package.json and file patterns
+   */
+  private async detectProjectType(): Promise<{ type: string; framework?: string; language: string }> {
+    const packageJsonPath = path.join(this.repoPath, 'package.json');
+
+    if (fs.existsSync(packageJsonPath)) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+
+        // Detect framework
+        if (deps['next']) return { type: 'web app', framework: 'Next.js', language: 'TypeScript' };
+        if (deps['react']) return { type: 'web app', framework: 'React', language: 'TypeScript' };
+        if (deps['vue']) return { type: 'web app', framework: 'Vue', language: 'TypeScript' };
+        if (deps['svelte']) return { type: 'web app', framework: 'Svelte', language: 'TypeScript' };
+        if (deps['express']) return { type: 'server', framework: 'Express', language: 'TypeScript' };
+        if (deps['fastify']) return { type: 'server', framework: 'Fastify', language: 'TypeScript' };
+        if (deps['@anthropic-ai/sdk']) return { type: 'AI application', framework: 'Anthropic SDK', language: 'TypeScript' };
+
+        // CLI tool detection
+        if (pkg.bin) return { type: 'CLI tool', language: 'TypeScript' };
+
+        return { type: 'Node.js project', language: 'TypeScript' };
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    // Check for other project types
+    if (fs.existsSync(path.join(this.repoPath, 'Cargo.toml'))) {
+      return { type: 'Rust project', language: 'Rust' };
+    }
+    if (fs.existsSync(path.join(this.repoPath, 'go.mod'))) {
+      return { type: 'Go project', language: 'Go' };
+    }
+    if (fs.existsSync(path.join(this.repoPath, 'requirements.txt')) ||
+        fs.existsSync(path.join(this.repoPath, 'pyproject.toml'))) {
+      return { type: 'Python project', language: 'Python' };
+    }
+
+    return { type: 'software project', language: 'unknown' };
+  }
+
+  /**
+   * Find entry points based on project type
+   */
+  private findEntryPoints(sourceFiles: string[], projectType: { type: string; framework?: string }): string[] {
+    const entryPatterns = [
+      // Common entry points
+      /^src\/index\.[tj]sx?$/,
+      /^src\/main\.[tj]sx?$/,
+      /^src\/app\.[tj]sx?$/,
+      /^src\/App\.[tj]sx?$/,
+      /^index\.[tj]sx?$/,
+      /^main\.[tj]sx?$/,
+      // Next.js
+      /^src\/pages\/_app\.[tj]sx?$/,
+      /^src\/app\/layout\.[tj]sx?$/,
+      /^pages\/_app\.[tj]sx?$/,
+      // Config files
+      /^package\.json$/,
+      /vite\.config\.[tj]s$/,
+      /next\.config\.[tj]s$/,
+      /webpack\.config\.[tj]s$/,
+    ];
+
+    const entries: string[] = [];
+
+    for (const file of sourceFiles) {
+      for (const pattern of entryPatterns) {
+        if (pattern.test(file)) {
+          entries.push(file);
+          break;
+        }
+      }
+    }
+
+    // Also include any index files as they're often entry points
+    const indexFiles = sourceFiles.filter(f =>
+      f.endsWith('/index.ts') ||
+      f.endsWith('/index.tsx') ||
+      f.endsWith('/index.js')
+    );
+
+    return [...new Set([...entries, ...indexFiles])].slice(0, 20);
+  }
+
+  /**
+   * Analyze directory structure and return info about significant directories
+   */
+  private analyzeDirectoryStructure(sourceFiles: string[]): Map<string, {
+    files: string[];
+    depth: number;
+    hasIndex: boolean;
+  }> {
+    const dirMap = new Map<string, { files: string[]; depth: number; hasIndex: boolean }>();
+
+    for (const file of sourceFiles) {
+      const dir = path.dirname(file);
+      if (dir === '.' || dir === '') continue;
+
+      // Get the most specific meaningful directory
+      const parts = dir.split(path.sep).filter(p => p !== 'src' && p !== 'lib' && p !== 'app');
+      if (parts.length === 0) continue;
+
+      // Use the first meaningful directory segment
+      const meaningfulDir = parts[0];
+
+      if (!dirMap.has(meaningfulDir)) {
+        dirMap.set(meaningfulDir, { files: [], depth: parts.length, hasIndex: false });
+      }
+
+      const info = dirMap.get(meaningfulDir)!;
+      info.files.push(file);
+
+      if (file.endsWith('/index.ts') || file.endsWith('/index.tsx')) {
+        info.hasIndex = true;
+      }
+    }
+
+    return dirMap;
+  }
+
+  /**
+   * Infer what type of page to create for a directory
+   */
+  private inferPageType(dirPath: string, info: { files: string[]; hasIndex: boolean }): {
+    title: string;
+    filename: string;
+    type: 'component' | 'module' | 'api' | 'guide';
+    context: string;
+  } | null {
+    const dirLower = dirPath.toLowerCase();
+
+    // Skip common non-documentation directories
+    if (['node_modules', 'dist', 'build', '.git', 'coverage', '__tests__', '__mocks__'].includes(dirLower)) {
+      return null;
+    }
+
+    // Map directory names to page types
+    const dirMappings: Record<string, { type: 'component' | 'module' | 'api' | 'guide'; contextPrefix: string }> = {
+      'components': { type: 'component', contextPrefix: 'UI components' },
+      'pages': { type: 'component', contextPrefix: 'Page components and routing' },
+      'views': { type: 'component', contextPrefix: 'View components' },
+      'layouts': { type: 'component', contextPrefix: 'Layout components' },
+      'hooks': { type: 'module', contextPrefix: 'Custom React hooks' },
+      'utils': { type: 'module', contextPrefix: 'Utility functions' },
+      'helpers': { type: 'module', contextPrefix: 'Helper functions' },
+      'lib': { type: 'module', contextPrefix: 'Library code' },
+      'services': { type: 'module', contextPrefix: 'Service layer' },
+      'api': { type: 'api', contextPrefix: 'API endpoints' },
+      'routes': { type: 'api', contextPrefix: 'Route handlers' },
+      'controllers': { type: 'api', contextPrefix: 'Controllers' },
+      'models': { type: 'module', contextPrefix: 'Data models' },
+      'store': { type: 'module', contextPrefix: 'State management' },
+      'context': { type: 'module', contextPrefix: 'React context providers' },
+      'types': { type: 'module', contextPrefix: 'Type definitions' },
+      'config': { type: 'guide', contextPrefix: 'Configuration' },
+      'scripts': { type: 'guide', contextPrefix: 'Build and utility scripts' },
+    };
+
+    const mapping = dirMappings[dirLower];
+    if (mapping) {
+      return {
+        title: this.formatDirectoryName(dirPath),
+        filename: `${dirLower}.md`,
+        type: mapping.type,
+        context: `${mapping.contextPrefix} in the ${this.formatDirectoryName(dirPath)} directory`,
+      };
+    }
+
+    // For other directories with enough files, create a module page
+    if (info.files.length >= 5) {
+      return {
+        title: this.formatDirectoryName(dirPath),
+        filename: `${dirLower.replace(/[^a-z0-9]/g, '-')}.md`,
+        type: 'module',
+        context: `The ${this.formatDirectoryName(dirPath)} module and its functionality`,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Format a directory name into a readable title
+   */
+  private formatDirectoryName(name: string): string {
+    return name
+      .replace(/[-_]/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+  }
+
+  /**
+   * Convert plain-text source references to clickable markdown links.
+   * Handles various formats like:
+   * - `See: path/file.ts:123`
+   * - `(path/file.ts:123)`
+   * - `Source: path/file.ts:123`
+   * And converts them to: `📄 [path/file.ts:123](../path/file.ts#L123)`
+   */
+  private makeSourceReferencesClickable(content: string): string {
+    let processed = content;
+
+    // Pattern 1: `See: path/file.ts:123` or `See path/file.ts:123`
+    processed = processed.replace(
+      /(?:See:?\s*)`?([a-zA-Z0-9_\-./]+\.[a-zA-Z]+):(\d+)`?/g,
+      (_, filePath, line) => `📄 [${filePath}:${line}](../${filePath}#L${line})`
+    );
+
+    // Pattern 2: `Source: path/file.ts:123`
+    processed = processed.replace(
+      /(?:Source:?\s*)`?([a-zA-Z0-9_\-./]+\.[a-zA-Z]+):(\d+)`?/g,
+      (_, filePath, line) => `📄 [${filePath}:${line}](../${filePath}#L${line})`
+    );
+
+    // Pattern 3: Plain references in backticks like `path/file.ts:123` (but not already linked)
+    processed = processed.replace(
+      /(?<!\[)`([a-zA-Z0-9_\-./]+\.[tj]sx?):(\d+)`(?!\])/g,
+      (_, filePath, line) => `📄 [${filePath}:${line}](../${filePath}#L${line})`
+    );
+
+    // Pattern 4: References in parentheses like (path/file.ts:123)
+    processed = processed.replace(
+      /\(([a-zA-Z0-9_\-./]+\.[tj]sx?):(\d+)\)(?!\])/g,
+      (_, filePath, line) => `(📄 [${filePath}:${line}](../${filePath}#L${line}))`
+    );
+
+    // Pattern 5: Bare references at end of sentences like "in file.ts:123."
+    processed = processed.replace(
+      /(?:in|from|at)\s+([a-zA-Z0-9_\-./]+\.[tj]sx?):(\d+)([.,])/g,
+      (_, filePath, line, punct) => `in 📄 [${filePath}:${line}](../${filePath}#L${line})${punct}`
+    );
+
+    return processed;
+  }
+
+  /**
+   * Generate a single wiki page using RAG for semantic context
+   */
+  private async generateSinglePage(
+    provider: LLMProvider,
+    pageSpec: {
+      title: string;
+      filename: string;
+      type: string;
+      context: string;
+      sourceFiles: string[];
+    },
+    allPages: Array<{ title: string; filename: string; type: string }>,
+    options: WikiGenerationOptions
+  ): Promise<string | null> {
+    console.log(`\n[Local] ════════════════════════════════════════════════════════`);
+    console.log(`[Local] generateSinglePage: ${pageSpec.title}`);
+    console.log(`[Local]   Type: ${pageSpec.type}`);
+    console.log(`[Local]   Filename: ${pageSpec.filename}`);
+    console.log(`[Local]   Source files: ${pageSpec.sourceFiles.slice(0, 5).join(', ')}${pageSpec.sourceFiles.length > 5 ? '...' : ''}`);
+
+    // Build cross-reference info for the model
+    const otherPages = allPages
+      .filter(p => p.filename !== pageSpec.filename)
+      .map(p => `- [${p.title}](./${p.filename})`)
+      .join('\n');
+
+    // Use RAG to get semantically relevant code chunks
+    let ragContext = '';
+    if (this.ragSystem && this.ragSystem.getDocumentCount() > 0) {
+      console.log(`[Local]   RAG system: ${this.ragSystem.getDocumentCount()} chunks indexed`);
+
+      // Search for content relevant to this page's topic
+      const searchQueries = [
+        pageSpec.title,
+        pageSpec.context,
+        ...pageSpec.sourceFiles.slice(0, 3).map(f => path.basename(f, path.extname(f)))
+      ];
+      console.log(`[Local]   Search queries: ${JSON.stringify(searchQueries)}`);
+
+      const seenChunks = new Set<string>();
+      const chunkFiles: string[] = [];
+      for (const query of searchQueries) {
+        try {
+          console.log(`[Local]   Searching for: "${query.slice(0, 50)}..."`);
+          const results = await this.ragSystem.search(query, { maxResults: 5 });
+          console.log(`[Local]     Found ${results.length} results`);
+
+          for (const result of results) {
+            const chunkKey = `${result.filePath}:${result.startLine}`;
+            if (seenChunks.has(chunkKey)) continue;
+            seenChunks.add(chunkKey);
+            chunkFiles.push(result.filePath);
+
+            // Include rich metadata from AST chunking
+            const chunkHeader = result.name
+              ? `### ${result.chunkType || 'Code'}: ${result.name} (${result.filePath}:${result.startLine})`
+              : `### ${result.filePath}:${result.startLine}-${result.endLine}`;
+
+            const docComment = result.documentation
+              ? `\n**Documentation:** ${result.documentation.slice(0, 200)}...\n`
+              : '';
+
+            const signature = result.signature ? `\n**Signature:** \`${result.signature}\`\n` : '';
+
+            ragContext += `\n${chunkHeader}${docComment}${signature}\n\`\`\`${result.language || ''}\n${result.content.slice(0, 1500)}\n\`\`\`\n`;
+
+            if (ragContext.length > 12000) break; // Context budget - 21B model can handle more
+          }
+        } catch (err) {
+          console.log(`[Local]   RAG search error for "${query}": ${(err as Error).message}`);
+        }
+        if (ragContext.length > 12000) break;
+      }
+      console.log(`[Local]   RAG context: ${ragContext.length} chars from ${seenChunks.size} chunks`);
+      console.log(`[Local]   Files in context: ${[...new Set(chunkFiles)].join(', ')}`);
+    }
+
+    // Fallback: read source files directly if RAG didn't provide enough context
+    if (ragContext.length < 500) {
+      console.log(`[Local]   Using file fallback (RAG context insufficient)`);
+      for (const file of pageSpec.sourceFiles.slice(0, 5)) {
+        try {
+          const fullPath = path.join(this.repoPath, file);
+          if (fs.existsSync(fullPath)) {
+            const content = fs.readFileSync(fullPath, 'utf-8');
+            const preview = content.slice(0, 1500);
+            ragContext += `\n### File: ${file}\n\`\`\`\n${preview}\n${content.length > 1500 ? '\n... (truncated)' : ''}\n\`\`\`\n`;
+          }
+        } catch {
+          // Skip unreadable files
+        }
+      }
+    }
+
+    // Build a detailed prompt that produces high-quality documentation
+    const relatedLinks = otherPages ? otherPages.split('\n').slice(0, 5).join('\n') : 'none';
+
+    const prompt = `# Documentation Task: "${pageSpec.title}"
+
+You are documenting a ${pageSpec.type} for a software project. Based on the source code below, write comprehensive technical documentation.
+
+## Source Code Context
+${ragContext || 'No source code available'}
+
+## Documentation Requirements
+
+Write a well-structured Markdown page with the following sections:
+
+### 1. Overview (required)
+- Start with \`# ${pageSpec.title}\`
+- Write 3-4 sentences explaining what this ${pageSpec.type} does and why it exists
+- Mention the key technologies used (React, TypeScript, etc.)
+
+### 2. Key Components (required)
+For each important file, function, or class you see in the code:
+- Explain its purpose and responsibility
+- Describe how it works at a high level
+- Add a clickable source reference using this exact format: \`📄 [path/to/file.ts:line](../path/to/file.ts#Lline)\`
+  Example: \`📄 [src/hooks/useAuth.ts:42](../src/hooks/useAuth.ts#L42)\`
+
+### 3. How It Works (required)
+- Explain the data flow or control flow
+- Describe any patterns used (e.g., hooks, state management)
+- Include code snippets where helpful
+- Reference source files using the clickable link format above
+
+### 4. Related Documentation
+Link to these related pages:
+${relatedLinks}
+
+## Important Rules
+- Base ALL content on the actual source code shown above
+- ALWAYS use clickable source references: \`📄 [path/file.ts:line](../path/file.ts#Lline)\`
+- Do not invent features or files not shown in the code
+- Write for developers who need to understand and work with this code
+
+Generate the documentation now:`;
+
+    const messages: LLMMessage[] = [
+      { role: 'user', content: prompt }
+    ];
+
+    const systemPrompt = `You are a senior technical writer creating internal documentation for a software development team. Your documentation is thorough, accurate, and always grounded in the actual source code. You explain not just WHAT the code does, but HOW it works and WHY it's designed that way. You include clickable source file references using this format: 📄 [path/file.ts:line](../path/file.ts#Lline)`;
+
+    // Debug: show prompt stats
+    console.log(`[Local]   ─────────────────────────────────────────────────────`);
+    console.log(`[Local]   PROMPT STATS:`);
+    console.log(`[Local]     System prompt: ${systemPrompt.length} chars`);
+    console.log(`[Local]     User prompt: ${prompt.length} chars`);
+    console.log(`[Local]     RAG context portion: ${ragContext.length} chars`);
+    console.log(`[Local]     Total input: ~${Math.round((systemPrompt.length + prompt.length) / 4)} tokens (est.)`);
+    console.log(`[Local]   ─────────────────────────────────────────────────────`);
+
+    // Try up to 2 times
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        console.log(`[Local]   Attempt ${attempt}: calling provider.chat()...`);
+
+        const response = await provider.chat(messages, [], {
+          maxTokens: 4096,
+          systemPrompt,
+          temperature: attempt === 1 ? 0.3 : 0.1, // Low temperature to reduce hallucination
+        });
+
+        console.log(`[Local]   Response: ${response.content?.length || 0} chars, stopReason: ${response.stopReason}`);
+
+        if (response.content && response.content.length > 200) {
+          // Post-process to ensure source references are clickable links
+          const processedContent = this.makeSourceReferencesClickable(response.content);
+          return processedContent;
+        }
+
+        if (attempt === 1) {
+          console.log(`[Local]   Content too short (${response.content?.length || 0} chars), retrying...`);
+        }
+      } catch (error) {
+        console.error(`[Local]   Attempt ${attempt} error: ${(error as Error).message}`);
+        if (options.verbose) {
+          console.error(`[Local]   Stack: ${(error as Error).stack}`);
+        }
+      }
+    }
+
+    console.log(`[Local]   Failed to generate content after 2 attempts`);
+    return null;
+  }
+
+  /**
+   * Generate the index page linking all generated pages
+   */
+  private async generateIndexPage(
+    provider: LLMProvider,
+    pages: Array<{ title: string; filename: string; type: string }>,
+    options: WikiGenerationOptions
+  ): Promise<string | null> {
+    const pageLinks = pages.map(p =>
+      `- [${p.title}](./${p.filename}) - ${p.type}`
+    ).join('\n');
+
+    const prompt = `Generate an index page for a technical wiki documentation site.
+
+Project: ${path.basename(this.repoPath)}
+
+Available Pages:
+${pageLinks}
+
+Requirements:
+1. Create an engaging introduction to the project
+2. Organize the page links into logical sections (Overview, Components, Guides, API)
+3. Add a brief description for each section
+4. Use proper Markdown formatting with a clear hierarchy
+5. Keep it professional and helpful for developers
+
+Generate the complete Markdown content for the index page:`;
+
+    const messages: LLMMessage[] = [
+      { role: 'user', content: prompt }
+    ];
+
+    try {
+      const response = await provider.chat(messages, [], {
+        maxTokens: 2048,
+        systemPrompt: 'You are a technical documentation expert. Generate clear, well-organized index pages.',
+        temperature: 0.7,
+      });
+
+      return response.content || null;
+    } catch {
+      // Fallback to a simple index
+      return `# ${path.basename(this.repoPath)} Documentation\n\nWelcome to the documentation.\n\n## Pages\n\n${pageLinks}`;
+    }
+  }
+
+  /**
+   * Scan repository for source files
+   */
+  private async scanSourceFiles(repoPath: string): Promise<string[]> {
+    const sourceFiles: string[] = [];
+    const extensions = ['.ts', '.js', '.tsx', '.jsx', '.py', '.go', '.rs', '.java', '.rb', '.php', '.cs', '.cpp', '.c', '.h'];
+    const ignoreDirs = ['node_modules', '.git', 'dist', 'build', 'coverage', '.next', '__pycache__', 'vendor'];
+
+    const scan = (dir: string, relativePath: string = '') => {
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          const relPath = path.join(relativePath, entry.name);
+
+          if (entry.isDirectory()) {
+            if (!ignoreDirs.includes(entry.name) && !entry.name.startsWith('.')) {
+              scan(fullPath, relPath);
+            }
+          } else if (entry.isFile()) {
+            const ext = path.extname(entry.name).toLowerCase();
+            if (extensions.includes(ext)) {
+              sourceFiles.push(relPath);
+            }
+          }
+        }
+      } catch {
+        // Ignore directories we can't read
+      }
+    };
+
+    scan(repoPath);
+    return sourceFiles;
   }
 
   /**
@@ -1349,6 +2785,95 @@ Create all ${missingPages.length} missing pages now.`;
           Object.entries(byExtension).filter(([, count]) => count > 0)
         ),
         largestFiles
+      }
+    };
+  }
+
+  /**
+   * Estimate generation for local mode - includes hardware detection and model recommendation
+   */
+  async estimateLocalGeneration(options: WikiGenerationOptions): Promise<LocalGenerationEstimate> {
+    // Get base estimates
+    const baseEstimate = await this.estimateGeneration(options);
+
+    // Import model manager for hardware detection
+    const { ModelManager } = await import('./llm/model-manager.js');
+    const modelManager = new ModelManager();
+
+    // Detect hardware
+    const hardware = await modelManager.detectHardware();
+
+    // Get recommended model
+    const recommendation = modelManager.recommendModel(hardware);
+
+    // Check if model is already downloaded
+    const downloadedModels = modelManager.listDownloadedModels();
+    const isDownloaded = downloadedModels.some(m => m.model.modelId === recommendation.modelId);
+
+    // Estimate tokens per second based on hardware
+    // These are rough estimates based on typical performance
+    let tokensPerSecond: number;
+    if (hardware.gpuVram >= 24) {
+      tokensPerSecond = 40; // High-end GPU
+    } else if (hardware.gpuVram >= 16) {
+      tokensPerSecond = 30; // Mid-range GPU
+    } else if (hardware.gpuVram >= 8) {
+      tokensPerSecond = 20; // Lower GPU
+    } else if (hardware.gpuVendor === 'apple') {
+      // Apple Silicon - estimate based on unified memory
+      tokensPerSecond = Math.min(35, 15 + (hardware.systemRam / 4));
+    } else {
+      // CPU-only or low VRAM
+      tokensPerSecond = 5;
+    }
+
+    // Estimate generation time for local mode
+    // Local models are slower but don't have API latency
+    const tokensNeeded = baseEstimate.estimatedTokens * 2.5; // Input + output
+    const generationSeconds = tokensNeeded / tokensPerSecond;
+    const localGenerationMinutes = Math.round((generationSeconds / 60) * 10) / 10;
+
+    // Calculate disk space needed
+    const modelSizeGb = recommendation.fileSizeBytes / 1e9;
+    const cacheSpaceGb = baseEstimate.estimatedChunks * 0.001; // ~1KB per chunk for embeddings
+    const diskSpaceRequired = Math.round((modelSizeGb + cacheSpaceGb) * 10) / 10;
+
+    return {
+      ...baseEstimate,
+      isLocal: true,
+      // Override cost - local mode is free
+      estimatedCost: {
+        input: 0,
+        output: 0,
+        total: 0
+      },
+      // Override time estimates for local
+      estimatedTime: {
+        indexingMinutes: baseEstimate.estimatedTime.indexingMinutes,
+        generationMinutes: localGenerationMinutes,
+        totalMinutes: Math.round((baseEstimate.estimatedTime.indexingMinutes + localGenerationMinutes) * 10) / 10
+      },
+      hardware: {
+        gpuVendor: hardware.gpuVendor,
+        gpuName: hardware.gpuName,
+        gpuVram: hardware.gpuVram,
+        systemRam: hardware.systemRam,
+        cpuCores: hardware.cpuCores
+      },
+      recommendedModel: {
+        modelId: recommendation.modelId,
+        quality: recommendation.quality,
+        fileSizeGb: Math.round(modelSizeGb * 10) / 10,
+        contextLength: recommendation.contextLength,
+        minVram: recommendation.minVram,
+        downloaded: isDownloaded
+      },
+      localEstimate: {
+        tokensPerSecond,
+        generationMinutes: localGenerationMinutes,
+        downloadRequired: !isDownloaded,
+        downloadSizeGb: isDownloaded ? 0 : Math.round(modelSizeGb * 10) / 10,
+        diskSpaceRequired
       }
     };
   }
