@@ -1389,14 +1389,22 @@ Create all ${missingPages.length} missing pages now.`;
     }
 
     // 3. Add specialized pages based on project patterns
+    // Use lower thresholds for smaller projects (< 50 files)
+    const isSmallProject = sourceFiles.length < 50;
+    const componentThreshold = isSmallProject ? 2 : 5;
+    const hookThreshold = isSmallProject ? 1 : 3;
+    const apiThreshold = isSmallProject ? 1 : 2;
+    const utilThreshold = isSmallProject ? 1 : 3;
+    const stateThreshold = isSmallProject ? 1 : 2;
+    const typeThreshold = isSmallProject ? 1 : 2;
 
-    // React/Vue/Svelte: Components page if we have many components
+    // React/Vue/Svelte: Components page
     const componentFiles = sourceFiles.filter(f =>
       f.includes('/components/') ||
       f.includes('/Components/') ||
       (f.endsWith('.tsx') && !f.includes('/pages/'))
     );
-    if (componentFiles.length >= 5 && !pages.some(p => p.title.includes('Component'))) {
+    if (componentFiles.length >= componentThreshold && !pages.some(p => p.title.includes('Component'))) {
       pages.push({
         title: 'UI Components',
         filename: 'components.md',
@@ -1409,9 +1417,9 @@ Create all ${missingPages.length} missing pages now.`;
     // Hooks (React)
     const hookFiles = sourceFiles.filter(f =>
       f.includes('/hooks/') ||
-      f.includes('use') && f.endsWith('.ts')
+      (f.includes('use') && f.endsWith('.ts'))
     );
-    if (hookFiles.length >= 3) {
+    if (hookFiles.length >= hookThreshold) {
       pages.push({
         title: 'Custom Hooks',
         filename: 'hooks.md',
@@ -1429,7 +1437,7 @@ Create all ${missingPages.length} missing pages now.`;
       f.includes('router') ||
       f.includes('handler')
     );
-    if (apiFiles.length >= 2) {
+    if (apiFiles.length >= apiThreshold) {
       pages.push({
         title: 'API Reference',
         filename: 'api.md',
@@ -1447,7 +1455,7 @@ Create all ${missingPages.length} missing pages now.`;
       f.includes('util') ||
       f.includes('helper')
     );
-    if (utilFiles.length >= 3) {
+    if (utilFiles.length >= utilThreshold) {
       pages.push({
         title: 'Utilities & Helpers',
         filename: 'utilities.md',
@@ -1466,7 +1474,7 @@ Create all ${missingPages.length} missing pages now.`;
       f.includes('store') ||
       f.includes('slice')
     );
-    if (stateFiles.length >= 2) {
+    if (stateFiles.length >= stateThreshold) {
       pages.push({
         title: 'State Management',
         filename: 'state-management.md',
@@ -1483,7 +1491,7 @@ Create all ${missingPages.length} missing pages now.`;
       f.includes('.d.ts') ||
       f.includes('types.ts')
     );
-    if (typeFiles.length >= 2) {
+    if (typeFiles.length >= typeThreshold) {
       pages.push({
         title: 'Type Definitions',
         filename: 'types.md',
@@ -1491,6 +1499,56 @@ Create all ${missingPages.length} missing pages now.`;
         context: 'TypeScript types, interfaces, and type utilities',
         sourceFiles: typeFiles,
       });
+    }
+
+    // Pages/Views (for React/Vue apps with page-based routing)
+    const pageFiles = sourceFiles.filter(f =>
+      f.includes('/pages/') ||
+      f.includes('/views/') ||
+      f.includes('/screens/')
+    );
+    if (pageFiles.length >= 2) {
+      pages.push({
+        title: 'Pages & Routing',
+        filename: 'pages.md',
+        type: 'component',
+        context: 'Page components, routing structure, and navigation',
+        sourceFiles: pageFiles.slice(0, 20),
+      });
+    }
+
+    // For small projects, add individual page docs for key files
+    if (isSmallProject && sourceFiles.length > 5) {
+      // Find main application files that deserve their own page
+      const keyFiles = sourceFiles.filter(f => {
+        const basename = path.basename(f).toLowerCase();
+        return (
+          basename === 'app.tsx' ||
+          basename === 'app.ts' ||
+          basename === 'main.tsx' ||
+          basename === 'main.ts' ||
+          basename.includes('router') ||
+          basename.includes('provider') ||
+          basename.includes('context')
+        );
+      });
+
+      for (const keyFile of keyFiles.slice(0, 3)) {
+        const basename = path.basename(keyFile, path.extname(keyFile));
+        const title = this.formatDirectoryName(basename);
+        const filename = `${basename.toLowerCase()}.md`;
+
+        // Don't duplicate if we already have a page for this
+        if (!pages.some(p => p.filename === filename)) {
+          pages.push({
+            title: `${title} (Core)`,
+            filename,
+            type: 'module',
+            context: `Core application file: ${keyFile}. Entry point or main configuration.`,
+            sourceFiles: [keyFile],
+          });
+        }
+      }
     }
 
     // Configuration
