@@ -132,21 +132,52 @@ export class SiteGenerator {
   }
 
   /**
-   * Extract codebase name from wiki directory path
-   * Looks for parent directory name or uses wiki folder name
+   * Extract codebase name from wiki content or directory path
+   * Priority: 1) index.md title, 2) parent directory name, 3) folder name
    */
   private extractCodebaseName(wikiDir: string): string {
     const resolved = path.resolve(wikiDir);
+
+    // First, try to read the index.md file for a title
+    const indexPaths = [
+      path.join(resolved, 'index.md'),
+      path.join(resolved, 'overview.md'),
+      path.join(resolved, 'README.md')
+    ];
+
+    for (const indexPath of indexPaths) {
+      if (fs.existsSync(indexPath)) {
+        try {
+          const content = fs.readFileSync(indexPath, 'utf-8');
+          const { data: frontmatter, content: markdownContent } = matter(content);
+
+          // Check frontmatter title first
+          if (frontmatter.title) {
+            return frontmatter.title;
+          }
+
+          // Try to extract title from first H1
+          const h1Match = markdownContent.match(/^#\s+(.+)$/m);
+          if (h1Match) {
+            return h1Match[1].trim();
+          }
+        } catch {
+          // Continue to fallback
+        }
+      }
+    }
+
+    // Fallback: use directory structure
     const parts = resolved.split(path.sep);
+    const lastPart = parts[parts.length - 1];
 
     // If wiki is in a 'wiki' or 'docs' folder, use parent name
-    const lastPart = parts[parts.length - 1];
     if (lastPart.toLowerCase() === 'wiki' || lastPart.toLowerCase() === 'docs' || lastPart.toLowerCase() === '.wiki') {
-      return parts[parts.length - 2] || 'Architecture Wiki';
+      return parts[parts.length - 2] || 'Documentation';
     }
 
     // Otherwise use the folder name
-    return lastPart || 'Architecture Wiki';
+    return lastPart || 'Documentation';
   }
 
   /**
