@@ -335,13 +335,16 @@ export class RAGSystem {
    * Handles code-specific tokenization (camelCase, snake_case, etc.)
    */
   private tokenize(text: string): string[] {
-    // Convert to lowercase
-    const lower = text.toLowerCase();
+    // Split camelCase and PascalCase BEFORE lowercasing (regex needs case info)
+    const withSpaces = text
+      .replace(/([a-z])([A-Z])/g, '$1 $2')      // camelCase -> camel Case
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2'); // XMLParser -> XML Parser
 
-    // Split on whitespace and punctuation, but preserve some code patterns
+    // Now convert to lowercase
+    const lower = withSpaces.toLowerCase();
+
+    // Split on whitespace and punctuation
     const tokens = lower
-      // Split camelCase and PascalCase
-      .replace(/([a-z])([A-Z])/g, '$1 $2')
       // Split snake_case
       .replace(/_/g, ' ')
       // Split on common delimiters

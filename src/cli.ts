@@ -957,7 +957,10 @@ async function findAffectedWikiPages(wikiDir: string, changedFiles: string[]): P
     const parts = f.split('/');
     const filename = parts.pop() || '';
     const dirname = parts.pop() || '';
-    const basename = filename.replace(/\.[^.]+$/, ''); // Remove extension
+    // Remove extension, but handle dotfiles (e.g., .gitignore -> .gitignore, not empty)
+    // For "file.ts" -> "file", for ".gitignore" -> ".gitignore", for ".env.local" -> ".env"
+    const lastDotIndex = filename.lastIndexOf('.');
+    const basename = (lastDotIndex > 0) ? filename.slice(0, lastDotIndex) : filename;
     return { full: f, filename, dirname, basename };
   });
 

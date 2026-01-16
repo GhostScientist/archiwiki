@@ -264,6 +264,14 @@ export async function extractPackage(options: ExtractOptions): Promise<PackageMa
       targetPath = path.join(outputPath, relativePath);
     }
 
+    // Security: Validate that resolved path stays within output directory
+    const resolvedTarget = path.resolve(targetPath);
+    const resolvedOutput = path.resolve(outputPath);
+    if (!resolvedTarget.startsWith(resolvedOutput + path.sep) && resolvedTarget !== resolvedOutput) {
+      console.warn(`Skipping file with path traversal attempt: ${relativePath}`);
+      continue;
+    }
+
     // Create directory and write file
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
     fs.writeFileSync(targetPath, content);
