@@ -1,6 +1,6 @@
-# Ted Mosby
+# SemanticWiki
 
-> "Kids, I'm going to tell you an incredible story... the story of your codebase architecture."
+> Generate architectural documentation wikis with source code traceability
 
 An AI-powered CLI that does two things:
 
@@ -11,14 +11,14 @@ An AI-powered CLI that does two things:
 
 ---
 
-## Two Ways to Use Ted Mosby
+## Two Ways to Use SemanticWiki
 
-### 1. Generate Documentation (`ted-mosby generate`)
+### 1. Generate Documentation (`semanticwiki generate`)
 
-Point Ted Mosby at any codebase and get a complete architectural wiki:
+Point SemanticWiki at any codebase and get a complete architectural wiki:
 
 ```bash
-ted-mosby generate -r ./my-project --site
+semanticwiki generate -r ./my-project --site
 ```
 
 This creates:
@@ -32,7 +32,7 @@ Every concept links directly to source code (`src/auth/jwt.ts:23-67`), so you ca
 
 ### 2. Agentic Codebase Assistant
 
-Under the hood, Ted Mosby is a full agentic coding assistant powered by Claude. It doesn't just template docs—it:
+Under the hood, SemanticWiki is a full agentic coding assistant powered by Claude. It doesn't just template docs—it:
 
 - **Explores your codebase** using filesystem tools
 - **Searches semantically** via RAG embeddings (FAISS + all-MiniLM-L6-v2)
@@ -41,10 +41,10 @@ Under the hood, Ted Mosby is a full agentic coding assistant powered by Claude. 
 
 ```bash
 # The agent runs autonomously, reading files, searching code, writing docs
-ted-mosby generate -r ./my-project --verbose
+semanticwiki generate -r ./my-project --verbose
 
 # Continue where you left off—agent resumes with cached context
-ted-mosby continue -r ./my-project --skip-index
+semanticwiki continue -r ./my-project --skip-index
 ```
 
 The same RAG system that powers documentation generation gives the agent deep, semantic understanding of your codebase—like Claude Code, but with your entire project pre-indexed for instant retrieval.
@@ -54,7 +54,7 @@ The same RAG system that powers documentation generation gives the agent deep, s
 ## Installation
 
 ```bash
-npm install -g ted-mosby
+npm install -g semanticwiki
 ```
 
 ## Prerequisites
@@ -76,10 +76,10 @@ export ANTHROPIC_API_KEY=your-api-key-here
 
 ```bash
 # Generate wiki with interactive site in one command
-ted-mosby generate -r ./my-project --site
+semanticwiki generate -r ./my-project --site
 
 # Or for a GitHub repository
-ted-mosby generate -r https://github.com/user/repo --site
+semanticwiki generate -r https://github.com/user/repo --site
 ```
 
 ### 3. View the results
@@ -97,28 +97,28 @@ The static site includes search, navigation, keyboard shortcuts, and works offli
 
 ```bash
 # Basic: Generate wiki for current directory
-ted-mosby generate -r .
+semanticwiki generate -r .
 
 # With interactive static site
-ted-mosby generate -r ./my-project --site
+semanticwiki generate -r ./my-project --site
 
 # Custom site title and theme
-ted-mosby generate -r ./my-project --site --site-title "My Project Docs" --theme dark
+semanticwiki generate -r ./my-project --site --site-title "My Project Docs" --theme dark
 
 # Generate site only (if wiki already exists)
-ted-mosby generate -r ./my-project --site-only
+semanticwiki generate -r ./my-project --site-only
 
 # Specify output directory
-ted-mosby generate -r ./my-project -o ./docs/architecture
+semanticwiki generate -r ./my-project -o ./docs/architecture
 
 # Focus on a specific subdirectory
-ted-mosby generate -r ./my-project -p src/core
+semanticwiki generate -r ./my-project -p src/core
 
 # Verbose output (see what the agent is doing)
-ted-mosby generate -r ./my-project -v
+semanticwiki generate -r ./my-project -v
 
 # Estimate time/cost before running (dry run)
-ted-mosby generate -r ./my-project -e
+semanticwiki generate -r ./my-project -e
 ```
 
 ### Continue Command
@@ -127,13 +127,13 @@ Resume generation to fix broken links or add missing pages:
 
 ```bash
 # Check for and generate missing pages
-ted-mosby continue -r ./my-project -o ./wiki
+semanticwiki continue -r ./my-project -o ./wiki
 
 # Just verify (don't generate)
-ted-mosby continue -r ./my-project -o ./wiki --verify-only
+semanticwiki continue -r ./my-project -o ./wiki --verify-only
 
 # Use cached index for faster iteration
-ted-mosby continue -r ./my-project -o ./wiki --skip-index
+semanticwiki continue -r ./my-project -o ./wiki --skip-index
 ```
 
 ### Search Command
@@ -142,10 +142,10 @@ Search your wiki from the command line:
 
 ```bash
 # Search wiki content
-ted-mosby search "authentication flow" -w ./wiki
+semanticwiki search "authentication flow" -w ./wiki
 
 # Hybrid search (keyword + semantic)
-ted-mosby search "how does login work" -w ./wiki --hybrid
+semanticwiki search "how does login work" -w ./wiki --hybrid
 ```
 
 ### MCP Server
@@ -154,10 +154,10 @@ Start an MCP server for AI assistant integration (Claude Desktop, Claude Code):
 
 ```bash
 # Start MCP server for a wiki
-ted-mosby mcp-server -w ./wiki
+semanticwiki mcp-server -w ./wiki
 
 # With code search (requires RAG index)
-ted-mosby mcp-server -w ./wiki -r ./my-project
+semanticwiki mcp-server -w ./wiki -r ./my-project
 ```
 
 Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
@@ -165,7 +165,7 @@ Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_deskt
 {
   "mcpServers": {
     "my-wiki": {
-      "command": "ted-mosby",
+      "command": "semanticwiki",
       "args": ["mcp-server", "-w", "/path/to/wiki"]
     }
   }
@@ -178,13 +178,13 @@ Create portable wiki packages for sharing:
 
 ```bash
 # Create package (includes wiki + RAG index)
-ted-mosby pack -w ./wiki -o ./my-wiki.archiwiki
+semanticwiki pack -w ./wiki -o ./my-wiki.archiwiki
 
 # Extract package
-ted-mosby unpack -p ./my-wiki.archiwiki -o ./extracted
+semanticwiki unpack -p ./my-wiki.archiwiki -o ./extracted
 
 # Extract wiki only (no RAG index)
-ted-mosby unpack -p ./my-wiki.archiwiki -o ./extracted --wiki-only
+semanticwiki unpack -p ./my-wiki.archiwiki -o ./extracted --wiki-only
 ```
 
 ### Large Codebase Options
@@ -193,13 +193,13 @@ For repositories with 10,000+ files:
 
 ```bash
 # Limit indexed chunks (reduces memory usage)
-ted-mosby generate -r ./large-project --max-chunks 5000
+semanticwiki generate -r ./large-project --max-chunks 5000
 
 # Reduce search results per query
-ted-mosby generate -r ./large-project --max-results 5
+semanticwiki generate -r ./large-project --max-results 5
 
 # Batched processing (for very large repos)
-ted-mosby generate -r ./large-project --batch-size 3000
+semanticwiki generate -r ./large-project --batch-size 3000
 ```
 
 ### Direct API Mode
@@ -208,20 +208,20 @@ Bypass Claude Code billing and use your API credits directly:
 
 ```bash
 # Uses ANTHROPIC_API_KEY directly
-ted-mosby generate -r ./my-project --direct-api
+semanticwiki generate -r ./my-project --direct-api
 
 # Combine with skip-index for fast iteration
-ted-mosby generate -r ./my-project --direct-api --skip-index
+semanticwiki generate -r ./my-project --direct-api --skip-index
 ```
 
 ### Debug & Development
 
 ```bash
 # Skip re-indexing (use cached embeddings)
-ted-mosby generate -r ./my-project --skip-index
+semanticwiki generate -r ./my-project --skip-index
 
 # Limit agent turns (reduces cost)
-ted-mosby generate -r ./my-project --max-turns 50
+semanticwiki generate -r ./my-project --max-turns 50
 ```
 
 ---
@@ -303,7 +303,7 @@ ted-mosby generate -r ./my-project --max-turns 50
 
 ## Static Site Features
 
-When you use `--site`, Ted Mosby generates a fully interactive documentation site:
+When you use `--site`, SemanticWiki generates a fully interactive documentation site:
 
 - **Full-text search** - Instant search across all pages (Cmd/Ctrl+K)
 - **AI Chat Assistant** - Ask questions about your codebase (`--ai-chat`)
@@ -319,7 +319,7 @@ When you use `--site`, Ted Mosby generates a fully interactive documentation sit
 Add an interactive AI assistant to your documentation site:
 
 ```bash
-ted-mosby generate -r ./my-project --site --ai-chat
+semanticwiki generate -r ./my-project --site --ai-chat
 ```
 
 The chat assistant:
@@ -332,7 +332,7 @@ The chat assistant:
 
 ## What to Expect
 
-When you run Ted Mosby:
+When you run SemanticWiki:
 
 1. **Repository Analysis** - The agent scans your codebase structure
 2. **Semantic Indexing** - Creates embeddings for intelligent code search
@@ -424,7 +424,7 @@ Create a `wiki.json` file in your project root to customize generation:
 
 ### RAG & Hybrid Search System
 
-Ted Mosby uses a sophisticated retrieval system combining multiple strategies:
+SemanticWiki uses a sophisticated retrieval system combining multiple strategies:
 
 - **Chunk size**: 1,500 characters with 200 character overlap
 - **Language-aware boundaries**: Chunks end at logical points (`}`, `};`, `end`)
@@ -446,7 +446,7 @@ For large codebases, chunks are prioritized by importance:
 
 ## How It Works
 
-Ted Mosby is built with:
+SemanticWiki is built with:
 
 - **[Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk)** - Orchestrates the AI agent workflow
 - **RAG (Retrieval Augmented Generation)** - Semantic code search using embeddings
@@ -462,28 +462,28 @@ Ted Mosby is built with:
 
 Use `--direct-api` to bypass Claude Code's billing check:
 ```bash
-ted-mosby generate -r ./my-project --direct-api
+semanticwiki generate -r ./my-project --direct-api
 ```
 
 ### Out of memory on large repos
 
 Limit the indexed chunks:
 ```bash
-ted-mosby generate -r ./large-project --max-chunks 5000 --batch-size 3000
+semanticwiki generate -r ./large-project --max-chunks 5000 --batch-size 3000
 ```
 
 ### Slow re-runs during development
 
 Skip re-indexing with cached embeddings:
 ```bash
-ted-mosby generate -r ./my-project --skip-index
+semanticwiki generate -r ./my-project --skip-index
 ```
 
 ### Missing pages / broken links
 
 Use the continue command to fix:
 ```bash
-ted-mosby continue -r ./my-project -o ./wiki
+semanticwiki continue -r ./my-project -o ./wiki
 ```
 
 ---
@@ -492,8 +492,8 @@ ted-mosby continue -r ./my-project -o ./wiki
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/ted-mosby.git
-cd ted-mosby
+git clone https://github.com/your-username/semanticwiki.git
+cd semanticwiki
 
 # Install dependencies
 npm install

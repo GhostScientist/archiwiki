@@ -32,7 +32,7 @@ npm-debug.log*
 audit.log
 
 # Agent config directory (may contain cached API keys)
-.ted-mosby/
+.semanticwiki/
 
 # npm
 *.tgz

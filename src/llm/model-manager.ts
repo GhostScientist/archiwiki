@@ -50,7 +50,7 @@ export class ModelManager {
   private progressCallback?: ProgressCallback;
 
   constructor() {
-    this.modelsDir = path.join(os.homedir(), '.ted-mosby', 'models');
+    this.modelsDir = path.join(os.homedir(), '.semanticwiki', 'models');
   }
 
   /**
@@ -304,7 +304,7 @@ export class ModelManager {
     // Start download
     const response = await fetch(model.downloadUrl, {
       headers: {
-        'User-Agent': 'ted-mosby/1.0',
+        'User-Agent': 'semanticwiki/1.0',
       },
     });
 

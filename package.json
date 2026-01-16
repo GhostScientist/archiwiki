@@ -1,10 +1,10 @@
 {
-  "name": "ted-mosby",
+  "name": "semanticwiki",
   "version": "1.2.0",
   "description": "Generate comprehensive architectural documentation wikis for code repositories with source traceability.",
   "main": "dist/cli.js",
   "bin": {
-    "ted-mosby": "./dist/cli.js"
+    "semanticwiki": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",

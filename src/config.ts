@@ -7,7 +7,7 @@ export interface Config {
   verbose?: boolean;
 }
 
-const CONFIG_DIR = join(homedir(), '.ted-mosby');
+const CONFIG_DIR = join(homedir(), '.semanticwiki');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
 export class ConfigManager {

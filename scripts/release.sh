@@ -11,7 +11,7 @@ NC='\033[0m' # No Color
 VERSION=$(node -p "require('./package.json').version")
 TAG="v$VERSION"
 
-echo -e "${YELLOW}Releasing ted-mosby $TAG${NC}"
+echo -e "${YELLOW}Releasing semanticwiki $TAG${NC}"
 echo ""
 
 # Check if tag already exists
@@ -90,5 +90,5 @@ echo ""
 echo -e "${GREEN}Successfully released $TAG${NC}"
 echo ""
 echo "Links:"
-echo "  npm: https://www.npmjs.com/package/ted-mosby/v/$VERSION"
+echo "  npm: https://www.npmjs.com/package/semanticwiki/v/$VERSION"
 echo "  GitHub: $(gh release view $TAG --json url -q .url)"

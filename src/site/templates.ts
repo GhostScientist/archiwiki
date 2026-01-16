@@ -45,7 +45,7 @@ export function getTemplates() {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="${escapeAttr(data.description)}">
-  <meta name="generator" content="Ted Mosby Wiki Generator">
+  <meta name="generator" content="SemanticWiki Generator">
 
   <title>${escapeHtml(data.title)} | ${escapeHtml(data.siteTitle)}</title>
 

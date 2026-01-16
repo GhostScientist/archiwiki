@@ -220,7 +220,7 @@ export class ArchitecturalWikiAgent {
     // Phase 2: Index codebase for RAG
     yield { type: 'phase', message: 'Indexing codebase for semantic search', progress: 10 };
     this.ragSystem = new RAGSystem({
-      storePath: path.join(this.outputDir, '.ted-mosby-cache'),
+      storePath: path.join(this.outputDir, '.semanticwiki-cache'),
       repoPath: this.repoPath,
       maxChunks: options.maxChunks  // Limit chunks for large codebases
     });
@@ -359,7 +359,7 @@ export class ArchitecturalWikiAgent {
     // Phase 2: Discover codebase size
     yield { type: 'phase', message: 'Analyzing codebase size', progress: 5 };
     const tempRag = new RAGSystem({
-      storePath: path.join(this.outputDir, '.ted-mosby-cache'),
+      storePath: path.join(this.outputDir, '.semanticwiki-cache'),
       repoPath: this.repoPath
     });
 
@@ -383,7 +383,7 @@ export class ArchitecturalWikiAgent {
 
       // Create fresh RAG system for this batch (memory isolation)
       this.ragSystem = new RAGSystem({
-        storePath: path.join(this.outputDir, '.ted-mosby-cache'),
+        storePath: path.join(this.outputDir, '.semanticwiki-cache'),
         repoPath: this.repoPath
       });
 
@@ -406,7 +406,7 @@ export class ArchitecturalWikiAgent {
     // This uses keyword search which is slower but doesn't require re-generating all embeddings
     yield { type: 'phase', message: 'Finalizing search index', progress: 70 };
     this.ragSystem = new RAGSystem({
-      storePath: path.join(this.outputDir, '.ted-mosby-cache'),
+      storePath: path.join(this.outputDir, '.semanticwiki-cache'),
       repoPath: this.repoPath
     });
 
@@ -553,7 +553,7 @@ export class ArchitecturalWikiAgent {
     this.repoPath = await this.prepareRepository(options.repoUrl, options.accessToken);
     this.outputDir = path.resolve(options.outputDir);
 
-    const cachePath = path.join(this.outputDir, '.ted-mosby-cache');
+    const cachePath = path.join(this.outputDir, '.semanticwiki-cache');
     const metadataPath = path.join(cachePath, 'metadata.json');
 
     if (!fs.existsSync(metadataPath)) {
@@ -754,7 +754,7 @@ export class ArchitecturalWikiAgent {
     }
 
     // Phase 2: Index codebase (or load existing)
-    const cachePath = path.join(this.outputDir, '.ted-mosby-cache');
+    const cachePath = path.join(this.outputDir, '.semanticwiki-cache');
     const metadataPath = path.join(cachePath, 'metadata.json');
 
     if (options.skipIndex && fs.existsSync(metadataPath)) {
@@ -1128,7 +1128,7 @@ Create all ${missingPages.length} missing pages now.`;
     }
 
     // Phase 2: Index codebase (or load existing)
-    const cachePath = path.join(this.outputDir, '.ted-mosby-cache');
+    const cachePath = path.join(this.outputDir, '.semanticwiki-cache');
     const metadataPath = path.join(cachePath, 'metadata.json');
 
     if (options.skipIndex && fs.existsSync(metadataPath)) {
@@ -3362,7 +3362,7 @@ Generate the complete Markdown content for the index page:`;
     }
 
     // Clone remote repository
-    const tempDir = path.join(process.cwd(), '.ted-mosby-repos');
+    const tempDir = path.join(process.cwd(), '.semanticwiki-repos');
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
     }
@@ -3405,7 +3405,7 @@ Generate the complete Markdown content for the index page:`;
           args: ['-y', '@modelcontextprotocol/server-filesystem', this.repoPath]
         },
         // Custom in-process tools - pass SDK server directly
-        'tedmosby': this.customServer
+        'semanticwiki': this.customServer
       },
       allowedTools: [
         // Filesystem tools
@@ -3416,12 +3416,12 @@ Generate the complete Markdown content for the index page:`;
         'mcp__filesystem__directory_tree',
         'mcp__filesystem__search_files',
         'mcp__filesystem__get_file_info',
-        // Custom tedmosby tools
-        'mcp__tedmosby__search_codebase',
-        'mcp__tedmosby__write_wiki_page',
-        'mcp__tedmosby__analyze_code_structure',
-        'mcp__tedmosby__verify_wiki_completeness',
-        'mcp__tedmosby__list_wiki_pages'
+        // Custom semanticwiki tools
+        'mcp__semanticwiki__search_codebase',
+        'mcp__semanticwiki__write_wiki_page',
+        'mcp__semanticwiki__analyze_code_structure',
+        'mcp__semanticwiki__verify_wiki_completeness',
+        'mcp__semanticwiki__list_wiki_pages'
       ],
       maxTurns: wikiOptions.maxTurns || 200,
       permissionMode: 'acceptEdits',
@@ -3479,7 +3479,7 @@ ${pagesToCreateList}
 ## Instructions for Surgical Update
 
 **For Modified Files:**
-1. Use \`mcp__tedmosby__search_codebase\` to understand what changed in the modified files
+1. Use \`mcp__semanticwiki__search_codebase\` to understand what changed in the modified files
 2. Read the affected wiki pages with \`mcp__filesystem__read_file\`
 3. Update the specific sections that reference the changed code
 4. Preserve all other content - only change what's necessary
@@ -3500,7 +3500,7 @@ ${pagesToCreateList}
 - Make MINIMAL changes - only update what's directly affected by the code changes
 - Preserve existing formatting, structure, and cross-references
 - Update line numbers in source references (file:line format) to match the new code
-- After all updates, use \`mcp__tedmosby__verify_wiki_completeness\` to check for broken links
+- After all updates, use \`mcp__semanticwiki__verify_wiki_completeness\` to check for broken links
 - Do NOT regenerate entire pages unless absolutely necessary
 
 Remember: Every architectural concept MUST include accurate file:line references to the source code.`;
@@ -3522,12 +3522,12 @@ ${missingList}
 
 ## Instructions
 
-1. First, use \`mcp__tedmosby__list_wiki_pages\` to see what pages already exist
+1. First, use \`mcp__semanticwiki__list_wiki_pages\` to see what pages already exist
 2. For each missing page above:
-   - Use \`mcp__tedmosby__search_codebase\` to find relevant code for that topic
+   - Use \`mcp__semanticwiki__search_codebase\` to find relevant code for that topic
    - Use \`mcp__filesystem__read_file\` to read the specific source files
-   - Use \`mcp__tedmosby__write_wiki_page\` to create the page with proper source traceability
-3. After creating all pages, use \`mcp__tedmosby__verify_wiki_completeness\` to confirm all links are valid
+   - Use \`mcp__semanticwiki__write_wiki_page\` to create the page with proper source traceability
+3. After creating all pages, use \`mcp__semanticwiki__verify_wiki_completeness\` to confirm all links are valid
 
 Remember: Every architectural concept MUST include file:line references to the source code.
 Do NOT modify existing pages unless they have broken internal links that need fixing.`;
@@ -3548,7 +3548,7 @@ Begin by:
 4. Generating documentation with source code traceability
 
 **IMPORTANT:** After generating all pages, you MUST:
-5. Use \`mcp__tedmosby__verify_wiki_completeness\` to check for broken links
+5. Use \`mcp__semanticwiki__verify_wiki_completeness\` to check for broken links
 6. If any pages are missing, create them immediately
 7. Repeat verification until all links are valid
 
@@ -4018,8 +4018,8 @@ Remember: Every architectural concept MUST include file:line references to the s
               }
 
               response += `\n## Action Required\n\n`;
-              response += `Use \`mcp__tedmosby__write_wiki_page\` to create each missing page above.\n`;
-              response += `After creating all pages, run \`mcp__tedmosby__verify_wiki_completeness\` again to confirm.\n`;
+              response += `Use \`mcp__semanticwiki__write_wiki_page\` to create each missing page above.\n`;
+              response += `After creating all pages, run \`mcp__semanticwiki__verify_wiki_completeness\` again to confirm.\n`;
             }
 
             return {
@@ -4083,7 +4083,7 @@ Remember: Every architectural concept MUST include file:line references to the s
     );
 
     return createSdkMcpServer({
-      name: 'tedmosby',
+      name: 'semanticwiki',
       version: '1.0.0',
       tools
     });

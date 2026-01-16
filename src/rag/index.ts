@@ -24,7 +24,7 @@ import {
 } from '../ast-chunker.js';
 
 // Configure transformers.js to use local cache
-env.cacheDir = './.ted-mosby-models';
+env.cacheDir = './.semanticwiki-models';
 
 // FAISS types (faiss-node) - use createRequire for CommonJS module in ESM context
 let faiss: any;

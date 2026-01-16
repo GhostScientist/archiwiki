@@ -80,7 +80,7 @@ export class OllamaProvider implements LLMProvider {
             `   Available models:\n     - ${availableModels || '(none)'}\n\n` +
             `   Pull it with: ollama pull ${this.modelName}\n\n` +
             `   Or use the bundled local mode without --use-ollama:\n` +
-            `     ted-mosby generate ./project --full-local`
+            `     semanticwiki generate ./project --full-local`
         );
       }
 
@@ -94,7 +94,7 @@ export class OllamaProvider implements LLMProvider {
             `  To use --use-ollama, ensure Ollama is running:\n` +
             `    $ ollama serve\n\n` +
             `  Or use the bundled local mode without --use-ollama:\n` +
-            `    $ ted-mosby generate ./project --full-local`
+            `    $ semanticwiki generate ./project --full-local`
         );
       }
 

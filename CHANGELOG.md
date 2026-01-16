@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to ted-mosby will be documented in this file.
+All notable changes to semanticwiki will be documented in this file.
 
 ## [1.2.0] - 2026-01-16
 
@@ -20,7 +20,7 @@ Advanced retrieval combining multiple search strategies:
 - **Reciprocal Rank Fusion (RRF)** to combine results
 - Optional cross-encoder reranking for precision
 
-#### MCP Wiki Server (`ted-mosby mcp-server`)
+#### MCP Wiki Server (`semanticwiki mcp-server`)
 Model Context Protocol server for AI assistant integration:
 - `search_wiki` - Semantic search across documentation
 - `get_wiki_page` - Retrieve full page content
@@ -28,17 +28,17 @@ Model Context Protocol server for AI assistant integration:
 - `search_code` - RAG-powered code search
 - `get_architecture_overview` - Quick architecture summary
 
-#### Portable Package Format (`ted-mosby pack/unpack`)
+#### Portable Package Format (`semanticwiki pack/unpack`)
 Bundle wikis with RAG indexes for sharing:
 - `.archiwiki` compressed format with manifest
 - Includes wiki content + embeddings + BM25 index
 - Extract wiki-only or full package
 
 #### New CLI Commands
-- `ted-mosby search <query>` - Search wiki from command line
-- `ted-mosby mcp-server` - Start MCP server for AI assistants
-- `ted-mosby pack` - Create portable wiki package
-- `ted-mosby unpack` - Extract wiki package
+- `semanticwiki search <query>` - Search wiki from command line
+- `semanticwiki mcp-server` - Start MCP server for AI assistants
+- `semanticwiki pack` - Create portable wiki package
+- `semanticwiki unpack` - Extract wiki package
 
 #### Incremental Embedding Updates
 - Tracks file changes via content hashing
@@ -60,9 +60,9 @@ Bundle wikis with RAG indexes for sharing:
 
 ### Changed
 - README rewrite highlighting two main capabilities upfront:
-  - **Wiki Generation** (`ted-mosby generate`) - Point at any codebase, get architectural docs
+  - **Wiki Generation** (`semanticwiki generate`) - Point at any codebase, get architectural docs
   - **Agentic Codebase Assistant** - RAG-powered agent that explores, searches, and reasons about code
-- New "Two Ways to Use Ted Mosby" section explaining both use cases
+- New "Two Ways to Use SemanticWiki" section explaining both use cases
 
 ## [1.1.1] - 2026-01-10
 
@@ -87,7 +87,7 @@ Bypass Claude Code subprocess and use Anthropic API directly with your `ANTHROPI
 #### Skip Index Mode (`--skip-index`)
 Reuse existing cached embeddings index for faster debugging and iteration.
 
-- Loads metadata from `.ted-mosby-cache/metadata.json`
+- Loads metadata from `.semanticwiki-cache/metadata.json`
 - Falls back to keyword search if FAISS index unavailable
 - Now available on both `generate` and `continue` commands
 
@@ -151,4 +151,4 @@ Activates automatically when FAISS unavailable:
 - RAG-based semantic code search with FAISS
 - Configurable `wiki.json` for custom documentation structure
 - Dry-run mode (`--estimate`) for time/cost estimation
-- MCP tool integration (filesystem, mermaid, custom tedmosby tools)
+- MCP tool integration (filesystem, mermaid, custom semanticwiki tools)

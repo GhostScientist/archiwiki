@@ -33,7 +33,7 @@ export class PermissionManager {
 
   constructor(options: PermissionOptions = {}) {
     this.policy = options.policy || 'permissive';
-    this.auditPath = options.auditPath || join(homedir(), '.ted-mosby', 'audit.log');
+    this.auditPath = options.auditPath || join(homedir(), '.semanticwiki', 'audit.log');
   }
 
   async requestPermission(request: PermissionRequest): Promise<PermissionResponse> {

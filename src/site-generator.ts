@@ -15,7 +15,7 @@ import { getClientScripts } from './site/scripts.js';
 import { pipeline, env } from '@huggingface/transformers';
 
 // Configure transformers.js for embeddings generation
-env.cacheDir = './.ted-mosby-models';
+env.cacheDir = './.semanticwiki-models';
 
 export interface SiteGenerationOptions {
   wikiDir: string;

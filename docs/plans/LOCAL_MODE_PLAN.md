@@ -2,15 +2,15 @@
 
 ## Overview
 
-This document outlines the implementation plan for adding a `--full-local` flag to the `ted-mosby generate` command, enabling complete offline operation using local language models with **zero external dependencies**.
+This document outlines the implementation plan for adding a `--full-local` flag to the `semanticwiki generate` command, enabling complete offline operation using local language models with **zero external dependencies**.
 
 ## Design Philosophy: Zero-Friction Local Mode
 
-**Goal:** Users should be able to run `ted-mosby generate --full-local` without installing anything else. The CLI handles everything: model download, GPU detection, and inference.
+**Goal:** Users should be able to run `semanticwiki generate --full-local` without installing anything else. The CLI handles everything: model download, GPU detection, and inference.
 
 ```bash
 # This should "just work" - no Ollama, no setup
-ted-mosby generate ./my-project --full-local
+semanticwiki generate ./my-project --full-local
 ```
 
 ---
@@ -62,7 +62,7 @@ For users who already have Ollama installed and prefer managing models separatel
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                           ted-mosby CLI                              │
+│                           semanticwiki CLI                              │
 │                                                                      │
 │   --full-local           → LocalLlamaProvider (default, bundled)    │
 │   --full-local --use-ollama → OllamaProvider (external server)      │
@@ -93,7 +93,7 @@ For users who already have Ollama installed and prefer managing models separatel
                          ┌─────────────────────┐
                          │   Model Management  │
                          │                     │
-                         │ ~/.ted-mosby/models │
+                         │ ~/.semanticwiki/models │
                          │ Auto-download GGUF  │
                          │ Hardware detection  │
                          └─────────────────────┘
@@ -106,7 +106,7 @@ For users who already have Ollama installed and prefer managing models separatel
 ### First-Time User Flow
 
 ```bash
-$ ted-mosby generate ./my-project --full-local
+$ semanticwiki generate ./my-project --full-local
 
 🏠 Local Mode Activated
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -121,7 +121,7 @@ $ ted-mosby generate ./my-project --full-local
 
    [████████████████████████░░░░░░░░░░░░░░░░] 62%  |  6.1 GB  |  45 MB/s  |  ETA 1:23
 
-   This is a one-time download. Models are cached in ~/.ted-mosby/models
+   This is a one-time download. Models are cached in ~/.semanticwiki/models
 
 ✅ Model ready!
 
@@ -142,7 +142,7 @@ $ ted-mosby generate ./my-project --full-local
 ### Subsequent Runs (Model Cached)
 
 ```bash
-$ ted-mosby generate ./another-project --full-local
+$ semanticwiki generate ./another-project --full-local
 
 🏠 Local Mode Activated
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -160,23 +160,23 @@ $ ted-mosby generate ./another-project --full-local
 
 ```bash
 # Use existing Ollama installation
-$ ted-mosby generate ./project --full-local --use-ollama
+$ semanticwiki generate ./project --full-local --use-ollama
 
 # With custom Ollama host
-$ ted-mosby generate ./project --full-local --use-ollama --ollama-host http://192.168.1.50:11434
+$ semanticwiki generate ./project --full-local --use-ollama --ollama-host http://192.168.1.50:11434
 
 # With specific Ollama model
-$ ted-mosby generate ./project --full-local --use-ollama --local-model codestral:22b
+$ semanticwiki generate ./project --full-local --use-ollama --local-model codestral:22b
 ```
 
 ### Power User: Custom Model
 
 ```bash
 # Use a specific GGUF file
-$ ted-mosby generate ./project --full-local --model-path ~/models/my-custom-model.gguf
+$ semanticwiki generate ./project --full-local --model-path ~/models/my-custom-model.gguf
 
 # Use a specific HuggingFace model (auto-downloads)
-$ ted-mosby generate ./project --full-local --local-model Qwen/Qwen2.5-Coder-32B-Instruct-GGUF
+$ semanticwiki generate ./project --full-local --local-model Qwen/Qwen2.5-Coder-32B-Instruct-GGUF
 ```
 
 ---
@@ -375,7 +375,7 @@ export class ModelManager {
   private modelsDir: string;
 
   constructor() {
-    this.modelsDir = path.join(os.homedir(), '.ted-mosby', 'models');
+    this.modelsDir = path.join(os.homedir(), '.semanticwiki', 'models');
   }
 
   async detectHardware(): Promise<HardwareProfile> {
@@ -730,7 +730,7 @@ export class OllamaProvider implements LLMProvider {
           `  To use --use-ollama, ensure Ollama is running:\n` +
           `    $ ollama serve\n\n` +
           `  Or use the bundled local mode without --use-ollama:\n` +
-          `    $ ted-mosby generate ./project --full-local`
+          `    $ semanticwiki generate ./project --full-local`
         );
       }
       throw error;
@@ -960,7 +960,7 @@ export { OllamaProvider } from './ollama-provider';
 ### Model Cache Location
 
 ```
-~/.ted-mosby/
+~/.semanticwiki/
 ├── models/
 │   ├── qwen2.5-coder-14b-instruct-q5_k_m.gguf
 │   └── qwen2.5-coder-7b-instruct-q5_k_m.gguf
@@ -972,15 +972,15 @@ export { OllamaProvider } from './ollama-provider';
 
 ```bash
 # Force local mode
-TED_MOSBY_FULL_LOCAL=true
+SEMANTICWIKI_FULL_LOCAL=true
 
 # Custom model path
-TED_MOSBY_MODEL_PATH=/path/to/model.gguf
+SEMANTICWIKI_MODEL_PATH=/path/to/model.gguf
 
 # Performance tuning
-TED_MOSBY_GPU_LAYERS=40
-TED_MOSBY_CONTEXT_SIZE=32768
-TED_MOSBY_THREADS=8
+SEMANTICWIKI_GPU_LAYERS=40
+SEMANTICWIKI_CONTEXT_SIZE=32768
+SEMANTICWIKI_THREADS=8
 
 # Ollama (if using --use-ollama)
 OLLAMA_HOST=http://localhost:11434
@@ -993,7 +993,7 @@ OLLAMA_HOST=http://localhost:11434
 ### Insufficient Hardware
 
 ```
-$ ted-mosby generate ./project --full-local
+$ semanticwiki generate ./project --full-local
 
 ❌ Error: Insufficient hardware for local mode.
 
@@ -1009,7 +1009,7 @@ $ ted-mosby generate ./project --full-local
 ### Model Download Failed
 
 ```
-$ ted-mosby generate ./project --full-local
+$ semanticwiki generate ./project --full-local
 
 ❌ Error: Failed to download model
 
@@ -1017,17 +1017,17 @@ $ ted-mosby generate ./project --full-local
    Reason: Network timeout
 
    Retry with:
-   $ ted-mosby generate ./project --full-local
+   $ semanticwiki generate ./project --full-local
 
    Or download manually:
-   $ wget -O ~/.ted-mosby/models/qwen2.5-coder-14b-instruct-q5_k_m.gguf \
+   $ wget -O ~/.semanticwiki/models/qwen2.5-coder-14b-instruct-q5_k_m.gguf \
        "https://huggingface.co/..."
 ```
 
 ### Out of Memory
 
 ```
-$ ted-mosby generate ./project --full-local
+$ semanticwiki generate ./project --full-local
 
 ❌ Error: Out of memory during inference
 

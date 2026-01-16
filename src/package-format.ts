@@ -79,7 +79,7 @@ export async function createPackage(options: PackageOptions): Promise<string> {
   for (const pattern of assetPatterns) {
     const assetFiles = await glob(pattern, { cwd: wikiPath });
     for (const file of assetFiles) {
-      if (!file.includes('.ted-mosby-cache')) {
+      if (!file.includes('.semanticwiki-cache')) {
         files.push({
           relativePath: `wiki/${file}`,
           absolutePath: path.join(wikiPath, file)
@@ -96,7 +96,7 @@ export async function createPackage(options: PackageOptions): Promise<string> {
   }
 
   // Add RAG index if requested and available
-  const cacheDir = path.join(wikiPath, '.ted-mosby-cache');
+  const cacheDir = path.join(wikiPath, '.semanticwiki-cache');
   let ragStats: PackageManifest['ragStats'] | undefined;
   let sourceCommit: string | undefined;
 
@@ -228,7 +228,7 @@ export async function extractPackage(options: ExtractOptions): Promise<PackageMa
 
   // Create output directories
   const wikiDir = path.join(outputPath, 'wiki');
-  const ragDir = path.join(outputPath, '.ted-mosby-cache');
+  const ragDir = path.join(outputPath, '.semanticwiki-cache');
   fs.mkdirSync(wikiDir, { recursive: true });
   if (!wikiOnly) {
     fs.mkdirSync(ragDir, { recursive: true });

@@ -31,7 +31,7 @@ const claudeConfig = loadClaudeConfig(workingDir);
 const program = new Command();
 
 program
-  .name('ted-mosby')
+  .name('semanticwiki')
   .description('Generate architectural documentation wikis for code repositories with source traceability.')
   .version('1.0.0');
 
@@ -105,7 +105,7 @@ program
         console.log(chalk.yellow('\nSet your Anthropic API key:'));
         console.log(chalk.gray('  export ANTHROPIC_API_KEY=your-key-here'));
         console.log(chalk.yellow('\nOr use local mode (no API key needed):'));
-        console.log(chalk.gray('  ted-mosby generate -r ./repo --full-local'));
+        console.log(chalk.gray('  semanticwiki generate -r ./repo --full-local'));
         process.exit(1);
       }
 
@@ -429,13 +429,13 @@ program
       }
 
       const wikiDir = path.resolve(options.output);
-      const cacheDir = path.join(wikiDir, '.ted-mosby-cache');
+      const cacheDir = path.join(wikiDir, '.semanticwiki-cache');
       const indexStatePath = path.join(cacheDir, 'index-state.json');
 
       // Check if we have an existing index
       if (!fs.existsSync(indexStatePath)) {
         console.log(chalk.yellow('⚠️  No existing index found.'));
-        console.log(chalk.gray('Run `ted-mosby generate` first to create the initial documentation.'));
+        console.log(chalk.gray('Run `semanticwiki generate` first to create the initial documentation.'));
         process.exit(1);
       }
 
@@ -543,19 +543,19 @@ program
   .command('update-embeddings')
   .description('Update embeddings index based on files changed since last index')
   .requiredOption('-r, --repo <path>', 'Repository path (local)')
-  .option('-o, --output <dir>', 'Output directory for wiki (where .ted-mosby-cache lives)', './wiki')
+  .option('-o, --output <dir>', 'Output directory for wiki (where .semanticwiki-cache lives)', './wiki')
   .option('-v, --verbose', 'Verbose output')
   .option('--full', 'Force full re-index instead of incremental update')
   .action(async (options) => {
     try {
       const wikiDir = path.resolve(options.output);
-      const cacheDir = path.join(wikiDir, '.ted-mosby-cache');
+      const cacheDir = path.join(wikiDir, '.semanticwiki-cache');
       const indexStatePath = path.join(cacheDir, 'index-state.json');
 
       // Check if we have an existing index
       if (!fs.existsSync(indexStatePath)) {
         console.log(chalk.yellow('⚠️  No existing index found.'));
-        console.log(chalk.gray('Run `ted-mosby generate` first to create the initial index.'));
+        console.log(chalk.gray('Run `semanticwiki generate` first to create the initial index.'));
         process.exit(1);
       }
 
@@ -673,7 +673,7 @@ program
 
         console.log();
         console.log(chalk.cyan('✓ Index updated successfully.'));
-        console.log(chalk.gray('Run `ted-mosby update-wiki` to update affected documentation.'));
+        console.log(chalk.gray('Run `semanticwiki update-wiki` to update affected documentation.'));
         console.log();
       } catch (error) {
         spinner.fail('Update failed');
@@ -711,13 +711,13 @@ program
       }
 
       const wikiDir = path.resolve(options.output);
-      const cacheDir = path.join(wikiDir, '.ted-mosby-cache');
+      const cacheDir = path.join(wikiDir, '.semanticwiki-cache');
       const indexStatePath = path.join(cacheDir, 'index-state.json');
 
       // Check if we have an existing index
       if (!fs.existsSync(indexStatePath)) {
         console.log(chalk.yellow('⚠️  No existing index found.'));
-        console.log(chalk.gray('Run `ted-mosby generate` first to create the initial documentation.'));
+        console.log(chalk.gray('Run `semanticwiki generate` first to create the initial documentation.'));
         process.exit(1);
       }
 
@@ -735,7 +735,7 @@ program
 
       if (currentCommit === indexState.commitHash) {
         console.log(chalk.green('✓ Wiki is up to date. No changes since last index.'));
-        console.log(chalk.gray('Tip: Run `ted-mosby update-embeddings` first if you have new commits.'));
+        console.log(chalk.gray('Tip: Run `semanticwiki update-embeddings` first if you have new commits.'));
         return;
       }
 
@@ -923,7 +923,7 @@ program
 
         console.log();
         console.log(chalk.cyan('✓ Wiki documentation updated.'));
-        console.log(chalk.gray('Tip: Run `ted-mosby verify` to check for any broken links.'));
+        console.log(chalk.gray('Tip: Run `semanticwiki verify` to check for any broken links.'));
         console.log();
       } catch (error) {
         spinner.fail('Update failed');
@@ -948,7 +948,7 @@ async function findAffectedWikiPages(wikiDir: string, changedFiles: string[]): P
   const glob = (await import('glob')).glob;
   const wikiFiles = await glob('**/*.md', {
     cwd: wikiDir,
-    ignore: ['node_modules/**', '.ted-mosby-cache/**']
+    ignore: ['node_modules/**', '.semanticwiki-cache/**']
   });
 
   // Normalize changed file paths for matching
@@ -1036,7 +1036,7 @@ program
       // Check if wiki directory exists
       if (!fs.existsSync(wikiDir)) {
         console.log(chalk.red('❌ Wiki directory not found: ' + wikiDir));
-        console.log(chalk.gray('Run `ted-mosby generate` first to create the wiki.'));
+        console.log(chalk.gray('Run `semanticwiki generate` first to create the wiki.'));
         process.exit(1);
       }
 
@@ -1159,7 +1159,7 @@ program
           console.log(chalk.green('✅ Wiki is now complete! All internal links are valid.'));
         } else {
           console.log(chalk.yellow(`⚠️  ${postVerification.brokenLinks.length} broken links remain.`));
-          console.log(chalk.gray('Run `ted-mosby continue` again to generate remaining pages.'));
+          console.log(chalk.gray('Run `semanticwiki continue` again to generate remaining pages.'));
         }
 
         console.log();
@@ -1242,7 +1242,7 @@ program
         }
 
         console.log();
-        console.log(chalk.yellow('Run `ted-mosby continue` to generate missing pages.'));
+        console.log(chalk.yellow('Run `semanticwiki continue` to generate missing pages.'));
       }
 
       process.exit(verification.isComplete ? 0 : 1);
@@ -1271,7 +1271,7 @@ program
       // Auto-detect RAG store if not specified
       let ragStorePath = options.ragStore;
       if (!ragStorePath) {
-        const cacheDir = path.join(wikiDir, '.ted-mosby-cache');
+        const cacheDir = path.join(wikiDir, '.semanticwiki-cache');
         if (fs.existsSync(path.join(cacheDir, 'metadata.json'))) {
           ragStorePath = cacheDir;
         }
@@ -1311,11 +1311,11 @@ program
 
       if (options.code) {
         // Search code using RAG
-        const cacheDir = path.join(wikiDir, '.ted-mosby-cache');
+        const cacheDir = path.join(wikiDir, '.semanticwiki-cache');
 
         if (!fs.existsSync(path.join(cacheDir, 'metadata.json'))) {
           console.log(chalk.red('❌ No RAG index found.'));
-          console.log(chalk.gray('Run `ted-mosby generate` first to create the index.'));
+          console.log(chalk.gray('Run `semanticwiki generate` first to create the index.'));
           process.exit(1);
         }
 
@@ -1873,7 +1873,7 @@ async function handleInteractiveMode(agent: any, permissionManager: PermissionMa
         {
           type: 'autocomplete',
           name: 'input',
-          message: chalk.cyan('ted-mosby>'),
+          message: chalk.cyan('semanticwiki>'),
           prefix: '',
           source: commandSource,
           suggestOnly: true,  // Allow free text input

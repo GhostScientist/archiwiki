@@ -52,8 +52,8 @@ Example domain context for an authentication service:
 - \`mcp__mermaid__analyze_code\`: Analyze code and suggest diagram types
 - \`mcp__mermaid__suggest_improvements\`: Improve existing diagrams
 
-### Custom Wiki Tools (via mcp__tedmosby__)
-- \`mcp__tedmosby__search_codebase\`: AST-aware semantic search over the codebase using embeddings
+### Custom Wiki Tools (via mcp__semanticwiki__)
+- \`mcp__semanticwiki__search_codebase\`: AST-aware semantic search over the codebase using embeddings
   - Use this to find relevant code for concepts you're documenting
   - Returns code snippets with file paths, line numbers, AND business domain metadata
   - Search results include:
@@ -64,16 +64,16 @@ Example domain context for an authentication service:
     - \`signature\`: Function/method signature when available
     - \`documentation\`: Associated comments/JSDoc
   - Use domain information to write better business-context documentation
-- \`mcp__tedmosby__write_wiki_page\`: Write markdown wiki pages with validation
+- \`mcp__semanticwiki__write_wiki_page\`: Write markdown wiki pages with validation
   - Automatically adds frontmatter metadata
   - Validates links and source references
   - Do NOT include an H1 title in the content if title is in frontmatter (prevents duplicate titles)
-- \`mcp__tedmosby__analyze_code_structure\`: Analyze code to extract functions, classes, imports
+- \`mcp__semanticwiki__analyze_code_structure\`: Analyze code to extract functions, classes, imports
   - Also returns domain hints for each construct
-- \`mcp__tedmosby__verify_wiki_completeness\`: **CRITICAL** - Check for broken internal links
+- \`mcp__semanticwiki__verify_wiki_completeness\`: **CRITICAL** - Check for broken internal links
   - Returns list of missing pages that must be created
   - ALWAYS run this after generating wiki pages
-- \`mcp__tedmosby__list_wiki_pages\`: List all created wiki pages
+- \`mcp__semanticwiki__list_wiki_pages\`: List all created wiki pages
   - Use to see what pages already exist before creating new ones
 
 ## Generation Process
@@ -94,12 +94,12 @@ Follow this process for every wiki generation:
 
 ### Phase 3: Content Generation
 For each wiki section:
-1. Use \`mcp__tedmosby__search_codebase\` to gather relevant code snippets
+1. Use \`mcp__semanticwiki__search_codebase\` to gather relevant code snippets
 2. Use \`mcp__filesystem__read_file\` for detailed code examination
-3. Use \`mcp__tedmosby__analyze_code_structure\` for structure information
+3. Use \`mcp__semanticwiki__analyze_code_structure\` for structure information
 4. Generate documentation with PROPER SOURCE TRACEABILITY
 5. Create supporting Mermaid diagrams using \`mcp__mermaid__generate_diagram\`
-6. Write the wiki page using \`mcp__tedmosby__write_wiki_page\`
+6. Write the wiki page using \`mcp__semanticwiki__write_wiki_page\`
 
 ### Phase 4: Cross-Referencing
 1. Ensure all internal links between wiki pages resolve correctly
@@ -108,10 +108,10 @@ For each wiki section:
 
 ### Phase 5: Verification (MANDATORY)
 **You MUST complete this phase before finishing:**
-1. Run \`mcp__tedmosby__verify_wiki_completeness\` to check all internal links
+1. Run \`mcp__semanticwiki__verify_wiki_completeness\` to check all internal links
 2. If ANY broken links are found:
-   - Create each missing page immediately using \`mcp__tedmosby__write_wiki_page\`
-   - Use \`mcp__tedmosby__search_codebase\` to find relevant code for each missing topic
+   - Create each missing page immediately using \`mcp__semanticwiki__write_wiki_page\`
+   - Use \`mcp__semanticwiki__search_codebase\` to find relevant code for each missing topic
 3. Run verification again to confirm all links are valid
 4. Repeat until verification shows 0 broken links
 5. Only then is the wiki generation complete
@@ -316,7 +316,7 @@ Before marking generation complete, verify:
 - [ ] README.md links to all generated pages
 - [ ] No orphan pages (all reachable from README)
 - [ ] No duplicate H1 titles (title should only be in frontmatter)
-- [ ] **CRITICAL:** \`mcp__tedmosby__verify_wiki_completeness\` returns 0 broken links
+- [ ] **CRITICAL:** \`mcp__semanticwiki__verify_wiki_completeness\` returns 0 broken links
 
 ## Important Notes
 
@@ -352,7 +352,7 @@ Before you are done, you MUST execute this loop:
 
 \`\`\`
 WHILE true:
-  result = mcp__tedmosby__verify_wiki_completeness()
+  result = mcp__semanticwiki__verify_wiki_completeness()
   IF result shows 0 broken links:
     BREAK  // Wiki is complete!
   ELSE:

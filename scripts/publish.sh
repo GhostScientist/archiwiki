@@ -8,7 +8,7 @@ cd "$PROJECT_DIR"
 show_help() {
   echo "Usage: ./scripts/publish.sh [OPTION]"
   echo
-  echo "Build and publish ted-mosby"
+  echo "Build and publish semanticwiki"
   echo
   echo "Options:"
   echo "  --link              Link globally for local development"
@@ -26,7 +26,7 @@ show_help() {
 }
 
 # Build first
-echo "🔧 Building ted-mosby..."
+echo "🔧 Building semanticwiki..."
 npm install
 npm run build
 
@@ -35,27 +35,27 @@ case "${1:-}" in
     echo "🔗 Linking globally (for local development)..."
     npm link
     echo
-    echo "✅ Linked! You can now run 'ted-mosby' from any directory."
+    echo "✅ Linked! You can now run 'semanticwiki' from any directory."
     echo "📁 The agent will use the current directory as its workspace."
     echo
-    echo "To unlink later: npm unlink -g ted-mosby"
+    echo "To unlink later: npm unlink -g semanticwiki"
     ;;
 
   --global)
     echo "📦 Installing globally..."
     npm install -g .
     echo
-    echo "✅ Installed! You can now run 'ted-mosby' from any directory."
+    echo "✅ Installed! You can now run 'semanticwiki' from any directory."
     ;;
 
   --public)
     echo "📦 Publishing to public npm registry..."
     echo
-    read -p "Publish ted-mosby to npmjs.com? (y/N) " confirm
+    read -p "Publish semanticwiki to npmjs.com? (y/N) " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
       npm publish --access public
       echo
-      echo "✅ Published! Install with: npm install -g ted-mosby"
+      echo "✅ Published! Install with: npm install -g semanticwiki"
     else
       echo "Cancelled."
     fi

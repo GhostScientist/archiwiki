@@ -1,6 +1,6 @@
 # Local Mode Testing Guide
 
-This document provides public GitHub repositories of varying sizes and tech stacks for testing the `--full-local` mode of ted-mosby.
+This document provides public GitHub repositories of varying sizes and tech stacks for testing the `--full-local` mode of semanticwiki.
 
 ## Test Repositories
 
@@ -13,7 +13,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Description**: Command-line JSON processor. Well-structured C codebase with clear architecture.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/jqlang/jq --full-local -o ./wiki-jq
+  semanticwiki generate -r https://github.com/jqlang/jq --full-local -o ./wiki-jq
   ```
 
 #### 2. **httpie** - HTTP CLI Client (Python)
@@ -23,7 +23,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Description**: Modern HTTP client for the command line. Clean Python project structure.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/httpie/cli --full-local -o ./wiki-httpie
+  semanticwiki generate -r https://github.com/httpie/cli --full-local -o ./wiki-httpie
   ```
 
 #### 3. **bat** - A cat Clone with Wings (Rust)
@@ -33,7 +33,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Description**: Cat clone with syntax highlighting and Git integration.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/sharkdp/bat --full-local -o ./wiki-bat
+  semanticwiki generate -r https://github.com/sharkdp/bat --full-local -o ./wiki-bat
   ```
 
 ---
@@ -48,7 +48,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Why notable**: One of the most actively maintained COBOL projects. Tests the COBOL chunking capability.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/OCamlPro/gnucobol --full-local -o ./wiki-gnucobol
+  semanticwiki generate -r https://github.com/OCamlPro/gnucobol --full-local -o ./wiki-gnucobol
   ```
 
 #### 5. **ripgrep** - Fast Search Tool (Rust)
@@ -58,7 +58,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Description**: Extremely fast recursive search tool. Well-documented, great architecture.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/BurntSushi/ripgrep --full-local -o ./wiki-ripgrep
+  semanticwiki generate -r https://github.com/BurntSushi/ripgrep --full-local -o ./wiki-ripgrep
   ```
 
 #### 6. **FastAPI** - Modern Python Web Framework (Python)
@@ -68,7 +68,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Description**: Modern, fast web framework for building APIs. Excellent documentation baseline.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/tiangolo/fastapi --full-local -o ./wiki-fastapi
+  semanticwiki generate -r https://github.com/tiangolo/fastapi --full-local -o ./wiki-fastapi
   ```
 
 #### 7. **esbuild** - Fast JavaScript Bundler (Go)
@@ -78,7 +78,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Description**: Extremely fast JavaScript bundler. Clean Go architecture.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/evanw/esbuild --full-local -o ./wiki-esbuild
+  semanticwiki generate -r https://github.com/evanw/esbuild --full-local -o ./wiki-esbuild
   ```
 
 ---
@@ -94,10 +94,10 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Test command**:
   ```bash
   # Focus on the standard library
-  ted-mosby generate -r https://github.com/rust-lang/rust --full-local -o ./wiki-rust-std -p library/std
+  semanticwiki generate -r https://github.com/rust-lang/rust --full-local -o ./wiki-rust-std -p library/std
 
   # Or focus on the compiler frontend
-  ted-mosby generate -r https://github.com/rust-lang/rust --full-local -o ./wiki-rustc -p compiler/rustc_parse --max-chunks 3000
+  semanticwiki generate -r https://github.com/rust-lang/rust --full-local -o ./wiki-rustc -p compiler/rustc_parse --max-chunks 3000
   ```
 
 #### 9. **Deno** - JavaScript/TypeScript Runtime (Rust/TypeScript)
@@ -107,7 +107,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Description**: Modern JavaScript/TypeScript runtime. Mixed Rust/TS codebase.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/denoland/deno --full-local -o ./wiki-deno --max-chunks 5000
+  semanticwiki generate -r https://github.com/denoland/deno --full-local -o ./wiki-deno --max-chunks 5000
   ```
 
 #### 10. **Neovim** - Vim-based Text Editor (C/Lua)
@@ -117,7 +117,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Description**: Modern Vim fork with improved architecture.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/neovim/neovim --full-local -o ./wiki-neovim --max-chunks 4000
+  semanticwiki generate -r https://github.com/neovim/neovim --full-local -o ./wiki-neovim --max-chunks 4000
   ```
 
 ---
@@ -132,7 +132,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Why notable**: Official AWS sample with production-like COBOL patterns.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/aws-samples/aws-mainframe-modernization-carddemo --full-local -o ./wiki-carddemo
+  semanticwiki generate -r https://github.com/aws-samples/aws-mainframe-modernization-carddemo --full-local -o ./wiki-carddemo
   ```
 
 #### 12. **COBOL Programming Course**
@@ -142,7 +142,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 - **Description**: Open Mainframe Project's COBOL course materials with sample programs.
 - **Test command**:
   ```bash
-  ted-mosby generate -r https://github.com/openmainframeproject/cobol-programming-course --full-local -o ./wiki-cobol-course
+  semanticwiki generate -r https://github.com/openmainframeproject/cobol-programming-course --full-local -o ./wiki-cobol-course
   ```
 
 ---
@@ -208,7 +208,7 @@ This document provides public GitHub repositories of varying sizes and tech stac
 ```bash
 # Test with Ollama backend
 ollama pull qwen2.5-coder:14b
-ted-mosby generate -r https://github.com/jqlang/jq --full-local --use-ollama -o ./wiki-jq-ollama
+semanticwiki generate -r https://github.com/jqlang/jq --full-local --use-ollama -o ./wiki-jq-ollama
 ```
 
 ---
@@ -219,10 +219,10 @@ To compare local mode quality with cloud mode:
 
 ```bash
 # Generate with local mode
-ted-mosby generate -r https://github.com/httpie/cli --full-local -o ./wiki-local
+semanticwiki generate -r https://github.com/httpie/cli --full-local -o ./wiki-local
 
 # Generate with Claude (requires API key)
-ted-mosby generate -r https://github.com/httpie/cli --direct-api -o ./wiki-cloud
+semanticwiki generate -r https://github.com/httpie/cli --direct-api -o ./wiki-cloud
 
 # Compare the outputs
 diff -r ./wiki-local ./wiki-cloud
@@ -235,28 +235,28 @@ diff -r ./wiki-local ./wiki-cloud
 ### Model Download Issues
 ```bash
 # Manual download if auto-download fails
-mkdir -p ~/.ted-mosby/models
-wget -O ~/.ted-mosby/models/qwen2.5-coder-14b-instruct-q5_k_m.gguf \
+mkdir -p ~/.semanticwiki/models
+wget -O ~/.semanticwiki/models/qwen2.5-coder-14b-instruct-q5_k_m.gguf \
   "https://huggingface.co/Qwen/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/main/qwen2.5-coder-14b-instruct-q5_k_m.gguf"
 ```
 
 ### Out of Memory
 ```bash
 # Reduce context size
-ted-mosby generate -r <repo> --full-local --context-size 16384
+semanticwiki generate -r <repo> --full-local --context-size 16384
 
 # Use smaller model
-ted-mosby generate -r <repo> --full-local --local-model qwen2.5-coder-7b-q5
+semanticwiki generate -r <repo> --full-local --local-model qwen2.5-coder-7b-q5
 
 # Limit chunks for large repos
-ted-mosby generate -r <repo> --full-local --max-chunks 2000
+semanticwiki generate -r <repo> --full-local --max-chunks 2000
 ```
 
 ### Slow Performance
 ```bash
 # Check GPU is being used
-ted-mosby generate -r <repo> --full-local --verbose
+semanticwiki generate -r <repo> --full-local --verbose
 
 # Force more GPU layers
-ted-mosby generate -r <repo> --full-local --gpu-layers 40
+semanticwiki generate -r <repo> --full-local --gpu-layers 40
 ```
