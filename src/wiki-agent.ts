@@ -1374,40 +1374,58 @@ Create all ${missingPages.length} missing pages now.`;
       return `${f.relativePath} (${f.extension}, ${sizeLabel})`;
     }).join('\n');
 
-    // 3. Ask LLM to analyze and categorize files
+    // 3. Summarize file types for the LLM
+    const extCounts = new Map<string, number>();
+    for (const f of allFiles) {
+      extCounts.set(f.extension, (extCounts.get(f.extension) || 0) + 1);
+    }
+    const extSummary = Array.from(extCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([ext, count]) => `${ext}: ${count} files`)
+      .join(', ');
+
+    // 4. Ask LLM to analyze and categorize files
     const analysisPrompt = `You are analyzing a software project to create architectural documentation.
 
 ## Project Files
 ${fileList}
 
+## File Type Summary
+${extSummary}
+
 ## Task
 Analyze these files and return a JSON object that identifies:
-1. Which files are architecturally important (core application logic, not content/data)
+1. Which files are architecturally important (core application logic)
 2. How to group them into documentation pages
 
 Return ONLY valid JSON in this exact format:
 {
-  "projectType": "brief description of project type",
+  "projectType": "brief description of project type and primary language/platform",
   "pages": [
     {
       "title": "Page Title",
       "filename": "page-slug.md",
       "type": "overview|component|api|guide|module|config",
       "context": "What this page documents and why it's important",
-      "files": ["path/to/file1.ts", "path/to/file2.ts"]
+      "files": ["path/to/file1.ext", "path/to/file2.ext"]
     }
   ],
   "excludedPatterns": ["paths or patterns that are content/data, not architecture"]
 }
 
 ## Guidelines
-- Focus on SOURCE CODE that defines the application's architecture
-- EXCLUDE: blog posts, markdown content, static assets, test fixtures, generated files
-- INCLUDE: components, services, utilities, configuration, API routes, state management
+- This project may use ANY programming language or platform (web, mainframe, mobile, embedded, etc.)
+- Recognize source code by extension:
+  - Modern: .ts, .js, .py, .go, .rs, .java, .rb, .php, .cs, .swift, .kt
+  - Legacy/Mainframe: .cbl/.cob (COBOL), .cpy (copybooks), .jcl (job control), .pli (PL/I), .asm (assembly), .bms (screen maps), .rpg (RPG)
+  - Data/Config: .sql, .json, .yaml, .xml
+- Focus on SOURCE CODE that defines the application's behavior and structure
+- EXCLUDE: test fixtures, generated files, binary data, pure documentation (.md about the project)
+- INCLUDE: programs, modules, procedures, copybooks, job scripts, screen definitions, data definitions
 - Create 5-15 pages depending on project complexity
 - Each page should have 2-10 related files
 - Always include an "Architecture Overview" page first
-- Group related functionality together (e.g., all auth files in one page)
+- Group related functionality together (e.g., all transaction programs, all copybooks, all batch jobs)
 
 Return only the JSON, no markdown code blocks or explanation.`;
 
@@ -1547,12 +1565,37 @@ Return only the JSON, no markdown code blocks or explanation.`;
             }
           } else if (entry.isFile()) {
             const ext = path.extname(entry.name).toLowerCase();
-            // Include source files and some config files
+            // Include source files from many languages and paradigms
             const includeExts = [
-              '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-              '.py', '.go', '.rs', '.java', '.rb', '.php',
-              '.vue', '.svelte', '.json', '.yaml', '.yml', '.toml',
-              '.md', '.mdx', '.css', '.scss', '.less'
+              // Web/JavaScript ecosystem
+              '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte',
+              // Systems programming
+              '.c', '.h', '.cpp', '.hpp', '.cc', '.cxx', '.rs', '.go',
+              // JVM languages
+              '.java', '.kt', '.kts', '.scala', '.groovy', '.gradle',
+              // Scripting languages
+              '.py', '.rb', '.php', '.pl', '.pm', '.lua', '.r', '.R',
+              // .NET ecosystem
+              '.cs', '.fs', '.vb',
+              // Mainframe / Legacy
+              '.cbl', '.cob', '.cpy', '.jcl', '.prc', '.bms', '.asm', '.s',
+              '.pli', '.pl1', '.rpg', '.rpgle', '.clp', '.clle', '.dspf', '.pf',
+              // Functional languages
+              '.hs', '.lhs', '.ml', '.mli', '.erl', '.ex', '.exs', '.elm', '.clj', '.cljs',
+              // Shell and scripting
+              '.sh', '.bash', '.zsh', '.ps1', '.psm1', '.bat', '.cmd',
+              // Data and config
+              '.json', '.yaml', '.yml', '.toml', '.xml', '.ini', '.conf', '.cfg',
+              // SQL and database
+              '.sql', '.ddl', '.dml', '.plsql', '.pgsql',
+              // Documentation (for context)
+              '.md', '.mdx', '.rst', '.txt',
+              // Styles (for web projects)
+              '.css', '.scss', '.less', '.sass',
+              // Mobile
+              '.swift', '.m', '.mm', '.dart',
+              // Other
+              '.proto', '.graphql', '.gql', '.tf', '.hcl'
             ];
 
             if (includeExts.includes(ext)) {
@@ -1579,21 +1622,72 @@ Return only the JSON, no markdown code blocks or explanation.`;
   }
 
   /**
-   * Check if a file is likely an entry point
+   * Check if a file is likely an entry point (language-agnostic)
    */
   private isEntryPoint(filePath: string): boolean {
+    const lowerPath = filePath.toLowerCase();
+    const basename = path.basename(lowerPath);
+
+    // Common entry point patterns across languages
     const patterns = [
-      /^src\/index\.[tj]sx?$/,
-      /^src\/main\.[tj]sx?$/,
-      /^src\/app\.[tj]sx?$/,
-      /^src\/App\.[tj]sx?$/,
-      /^index\.[tj]sx?$/,
-      /^main\.[tj]sx?$/,
-      /package\.json$/,
-      /vite\.config\.[tj]s$/,
-      /next\.config\.[tj]s$/,
+      // JavaScript/TypeScript
+      /^(src\/)?index\.[tj]sx?$/i,
+      /^(src\/)?main\.[tj]sx?$/i,
+      /^(src\/)?app\.[tj]sx?$/i,
+      /package\.json$/i,
+      /vite\.config\.[tj]s$/i,
+      /next\.config\.[tj]s$/i,
+      /webpack\.config\.[tj]s$/i,
+      // Python
+      /^(src\/)?main\.py$/i,
+      /^(src\/)?app\.py$/i,
+      /^(src\/)?__main__\.py$/i,
+      /setup\.py$/i,
+      /pyproject\.toml$/i,
+      // Java/Kotlin
+      /Main\.(java|kt)$/i,
+      /Application\.(java|kt)$/i,
+      /pom\.xml$/i,
+      /build\.gradle(\.kts)?$/i,
+      // .NET
+      /Program\.cs$/i,
+      /Startup\.cs$/i,
+      /\.csproj$/i,
+      // Go
+      /^(cmd\/)?main\.go$/i,
+      /go\.mod$/i,
+      // Rust
+      /^src\/main\.rs$/i,
+      /^src\/lib\.rs$/i,
+      /Cargo\.toml$/i,
+      // Ruby
+      /^(lib\/)?.*\.rb$/i,
+      /Gemfile$/i,
+      /Rakefile$/i,
+      // Swift/iOS
+      /AppDelegate\.swift$/i,
+      /ContentView\.swift$/i,
+      /\.xcodeproj/i,
+      /Package\.swift$/i,
+      // COBOL/Mainframe
+      /MAINPGM\.cbl$/i,
+      /COBOL\/.*\.cbl$/i,
+      /\.jcl$/i,  // Job control is often entry point for batch
+      // General config
+      /Makefile$/i,
+      /Dockerfile$/i,
+      /docker-compose\.ya?ml$/i,
     ];
-    return patterns.some(p => p.test(filePath));
+
+    // Check patterns
+    if (patterns.some(p => p.test(filePath))) {
+      return true;
+    }
+
+    // Check common entry point basenames
+    const entryNames = ['main', 'index', 'app', 'application', 'program', 'start', 'server', 'bootstrap'];
+    const nameWithoutExt = basename.replace(/\.[^.]+$/, '').toLowerCase();
+    return entryNames.includes(nameWithoutExt);
   }
 
   /**
