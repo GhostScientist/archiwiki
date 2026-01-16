@@ -178,13 +178,13 @@ Create portable wiki packages for sharing:
 
 ```bash
 # Create package (includes wiki + RAG index)
-semanticwiki pack -w ./wiki -o ./my-wiki.archiwiki
+semanticwiki pack -w ./wiki -o ./my-wiki.semantics
 
 # Extract package
-semanticwiki unpack -p ./my-wiki.archiwiki -o ./extracted
+semanticwiki unpack -p ./my-wiki.semantics -o ./extracted
 
 # Extract wiki only (no RAG index)
-semanticwiki unpack -p ./my-wiki.archiwiki -o ./extracted --wiki-only
+semanticwiki unpack -p ./my-wiki.semantics -o ./extracted --wiki-only
 ```
 
 ### Large Codebase Options
@@ -287,7 +287,7 @@ semanticwiki generate -r ./my-project --max-turns 50
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-w, --wiki <dir>` | Wiki directory (required) | - |
-| `-o, --output <file>` | Output package path | `<name>.archiwiki` |
+| `-o, --output <file>` | Output package path | `<name>.semantics` |
 | `-n, --name <name>` | Package name | wiki folder name |
 | `--no-rag` | Exclude RAG index | - |
 

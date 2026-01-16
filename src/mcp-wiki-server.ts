@@ -1,5 +1,5 @@
 /**
- * MCP Server for querying ArchiWiki generated documentation
+ * MCP Server for querying SemanticWiki generated documentation
  *
  * This server exposes tools for:
  * - Searching wiki pages by keyword or semantic similarity
@@ -49,7 +49,7 @@ export class WikiMCPServer {
     this.config = config;
     this.server = new Server(
       {
-        name: 'archiwiki',
+        name: 'semanticwiki',
         version: '1.0.0',
       },
       {
@@ -514,7 +514,7 @@ export class WikiMCPServer {
 
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('ArchiWiki MCP Server started');
+    console.error('SemanticWiki MCP Server started');
   }
 }
 
@@ -536,7 +536,7 @@ async function main() {
       repoPath = args[++i];
     } else if (args[i] === '--help' || args[i] === '-h') {
       console.log(`
-ArchiWiki MCP Server
+SemanticWiki MCP Server
 
 Usage: npx ts-node src/mcp-wiki-server.ts [options]
 

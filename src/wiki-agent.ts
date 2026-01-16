@@ -10,6 +10,7 @@ import { MCPConfigManager } from './mcp-config.js';
 import { RAGSystem } from './rag/index.js';
 import { WIKI_SYSTEM_PROMPT } from './prompts/wiki-system.js';
 import { createLLMProvider, type LLMProvider, type LLMMessage, type LLMTool } from './llm/index.js';
+import { CodebaseDiscovery, generateHierarchicalIndex, generateComponentTable, type DiscoveryResult, type DiscoveredDomain } from './discovery/index.js';
 
 export interface WikiGenerationOptions {
   repoUrl: string;
@@ -107,6 +108,22 @@ export interface WikiGenerationOptions {
     /** New wiki pages that should be created */
     pagesToCreate: string[];
   };
+
+  // Contextual retrieval options
+  /** Enable contextual retrieval for improved chunk understanding */
+  useContextualRetrieval?: boolean;
+  /** Use local LLM for contextual retrieval instead of Claude API */
+  contextualLocal?: boolean;
+  /** Use Ollama server for contextual retrieval (requires contextualLocal) */
+  contextualUseOllama?: boolean;
+  /** Anthropic API key for contextual retrieval */
+  contextualApiKey?: string;
+  /** Model for contextual retrieval (default: claude-3-haiku) */
+  contextualModel?: string;
+  /** Ollama host for contextual retrieval */
+  contextualOllamaHost?: string;
+  /** Local model name for contextual retrieval */
+  contextualLocalModel?: string;
 }
 
 export interface WikiAgentConfig {
@@ -222,7 +239,15 @@ export class ArchitecturalWikiAgent {
     this.ragSystem = new RAGSystem({
       storePath: path.join(this.outputDir, '.semanticwiki-cache'),
       repoPath: this.repoPath,
-      maxChunks: options.maxChunks  // Limit chunks for large codebases
+      maxChunks: options.maxChunks,  // Limit chunks for large codebases
+      // Contextual retrieval options
+      useContextualRetrieval: options.useContextualRetrieval,
+      contextualLocal: options.contextualLocal,
+      contextualUseOllama: options.contextualUseOllama,
+      contextualApiKey: options.contextualApiKey || this.config.apiKey,
+      contextualModel: options.contextualModel,
+      contextualOllamaHost: options.contextualOllamaHost || options.ollamaHost,
+      contextualLocalModel: options.contextualLocalModel
     });
     await this.ragSystem.indexRepository();
     yield { type: 'step', message: `Indexed ${this.ragSystem.getDocumentCount()} code chunks` };
@@ -769,7 +794,15 @@ export class ArchitecturalWikiAgent {
       this.ragSystem = new RAGSystem({
         storePath: cachePath,
         repoPath: this.repoPath,
-        maxChunks: options.maxChunks
+        maxChunks: options.maxChunks,
+        // Contextual retrieval options
+        useContextualRetrieval: options.useContextualRetrieval,
+        contextualLocal: options.contextualLocal,
+        contextualUseOllama: options.contextualUseOllama,
+        contextualApiKey: options.contextualApiKey || this.config.apiKey,
+        contextualModel: options.contextualModel,
+        contextualOllamaHost: options.contextualOllamaHost || options.ollamaHost,
+        contextualLocalModel: options.contextualLocalModel
       });
       await this.ragSystem.indexRepository();
     }
@@ -1143,7 +1176,15 @@ Create all ${missingPages.length} missing pages now.`;
       this.ragSystem = new RAGSystem({
         storePath: cachePath,
         repoPath: this.repoPath,
-        maxChunks: options.maxChunks
+        maxChunks: options.maxChunks,
+        // Contextual retrieval options
+        useContextualRetrieval: options.useContextualRetrieval,
+        contextualLocal: options.contextualLocal,
+        contextualUseOllama: options.contextualUseOllama,
+        contextualApiKey: options.contextualApiKey || this.config.apiKey,
+        contextualModel: options.contextualModel,
+        contextualOllamaHost: options.contextualOllamaHost || options.ollamaHost,
+        contextualLocalModel: options.contextualLocalModel
       });
       await this.ragSystem.indexRepository();
     }
@@ -1151,12 +1192,35 @@ Create all ${missingPages.length} missing pages now.`;
     const searchMode = this.ragSystem['index'] ? 'vector search' : 'keyword search';
     yield { type: 'step', message: `Loaded ${this.ragSystem.getDocumentCount()} chunks (${searchMode})` };
 
+    // Phase 2.5: Run codebase discovery for hierarchical structure
+    yield { type: 'phase', message: 'Discovering codebase structure', progress: 12 };
+
+    const discovery = new CodebaseDiscovery({
+      repoPath: this.repoPath,
+      targetPath: options.targetPath,
+      verbose: options.verbose,
+    });
+
+    const discoveryResult = await discovery.discover();
+    yield { type: 'step', message: `Discovered ${discoveryResult.domains.length} domains, ${discoveryResult.wikiStructure.sections.length} sections` };
+
     // Phase 3: Initialize local LLM provider
     yield { type: 'phase', message: 'Initializing local LLM', progress: 15 };
 
-    let provider: LLMProvider;
-    try {
-      provider = await createLLMProvider({
+    let provider: LLMProvider | null = null;
+    let pagesSinceProviderInit = 0;
+    const PROVIDER_RESET_THRESHOLD = 15; // Reset before hitting 20 sequence limit
+
+    // Helper to (re)initialize provider
+    const initializeProvider = async (): Promise<LLMProvider> => {
+      if (provider && 'shutdown' in provider) {
+        try {
+          await (provider as any).shutdown();
+        } catch {
+          // Ignore shutdown errors
+        }
+      }
+      const newProvider = await createLLMProvider({
         fullLocal: true,
         useOllama: options.useOllama,
         ollamaHost: options.ollamaHost,
@@ -1168,6 +1232,13 @@ Create all ${missingPages.length} missing pages now.`;
         threads: options.threads,
         verbose: options.verbose,
       });
+      provider = newProvider;
+      pagesSinceProviderInit = 0;
+      return newProvider;
+    };
+
+    try {
+      provider = await initializeProvider();
     } catch (error) {
       const err = error as Error;
       yield { type: 'error', message: `Failed to initialize local LLM: ${err.message}` };
@@ -1183,11 +1254,17 @@ Create all ${missingPages.length} missing pages now.`;
     console.log('[Local] Output:', this.outputDir);
     console.log('='.repeat(60) + '\n');
 
-    // Phase 4: Use LLM to analyze project and determine pages to generate
-    yield { type: 'phase', message: 'Analyzing project with LLM', progress: 20 };
+    // Phase 4: Use discovery results + LLM to plan pages
+    yield { type: 'phase', message: 'Planning wiki pages from discovery', progress: 20 };
 
-    const pagesToGenerate = await this.analyzeProjectWithLLM(provider, options);
+    const pagesToGenerate = await this.planPagesFromDiscovery(provider, discoveryResult, options);
     console.log(`[Local] Identified ${pagesToGenerate.length} pages to generate\n`);
+
+    // Generate hierarchical index.md first
+    console.log('[Local] Generating hierarchical index.md');
+    const indexContent = this.generateEnhancedIndex(discoveryResult, pagesToGenerate);
+    fs.writeFileSync(path.join(this.outputDir, 'index.md'), indexContent, 'utf-8');
+    yield { type: 'file', message: 'index.md', detail: 'Hierarchical Index' };
 
     // Phase 5: Generate each page one at a time
     yield { type: 'phase', message: `Generating ${pagesToGenerate.length} wiki pages`, progress: 25 };
@@ -1201,8 +1278,19 @@ Create all ${missingPages.length} missing pages now.`;
 
       console.log(`\n[Local] ─── Page ${pagesGenerated + 1}/${pagesToGenerate.length}: ${pageSpec.title} ───`);
 
+      // Check if we need to reinitialize provider before hitting sequence limit
+      if (pagesSinceProviderInit >= PROVIDER_RESET_THRESHOLD) {
+        console.log(`[Local] Resetting LLM provider (${pagesSinceProviderInit} pages since last reset)...`);
+        try {
+          await initializeProvider();
+        } catch (error) {
+          console.error(`[Local] Failed to reinitialize provider: ${(error as Error).message}`);
+        }
+      }
+
       try {
         const content = await this.generateSinglePage(provider, pageSpec, pagesToGenerate, options);
+        pagesSinceProviderInit++;
 
         if (content) {
           // Write the page
@@ -1222,8 +1310,36 @@ Create all ${missingPages.length} missing pages now.`;
         }
       } catch (error) {
         const err = error as Error;
-        console.error(`[Local] ✗ Failed: ${pageSpec.title} - ${err.message}`);
-        pagesFailed++;
+        // Handle sequence exhaustion - reinitialize and retry once
+        if (err.message.includes('No sequences left')) {
+          console.log(`[Local] Sequence exhausted, reinitializing provider and retrying...`);
+          try {
+            await initializeProvider();
+            const content = await this.generateSinglePage(provider, pageSpec, pagesToGenerate, options);
+            pagesSinceProviderInit++;
+
+            if (content) {
+              const pagePath = path.join(this.outputDir, pageSpec.filename);
+              const pageDir = path.dirname(pagePath);
+              if (!fs.existsSync(pageDir)) {
+                fs.mkdirSync(pageDir, { recursive: true });
+              }
+              fs.writeFileSync(pagePath, content, 'utf-8');
+              console.log(`[Local] ✓ Generated (after retry): ${pageSpec.filename}`);
+              pagesGenerated++;
+              yield { type: 'file', message: pageSpec.filename, detail: pageSpec.title };
+            } else {
+              console.log(`[Local] ⚠ Empty content for: ${pageSpec.title}`);
+              pagesFailed++;
+            }
+          } catch (retryError) {
+            console.error(`[Local] ✗ Failed after retry: ${pageSpec.title} - ${(retryError as Error).message}`);
+            pagesFailed++;
+          }
+        } else {
+          console.error(`[Local] ✗ Failed: ${pageSpec.title} - ${err.message}`);
+          pagesFailed++;
+        }
       }
     }
 
@@ -1268,6 +1384,16 @@ Create all ${missingPages.length} missing pages now.`;
 
         console.log(`[Local] ─── Generating missing page: ${pageTitle} ───`);
 
+        // Check if we need to reinitialize provider
+        if (pagesSinceProviderInit >= PROVIDER_RESET_THRESHOLD) {
+          console.log(`[Local] Resetting LLM provider (${pagesSinceProviderInit} pages since last reset)...`);
+          try {
+            await initializeProvider();
+          } catch (error) {
+            console.error(`[Local] Failed to reinitialize provider: ${(error as Error).message}`);
+          }
+        }
+
         // Find broken links that reference this page to get context
         const referencingLinks = verification.brokenLinks.filter(l => l.resolvedTarget === missingFile);
         const linkContexts = referencingLinks.map(l => l.linkText).join(', ');
@@ -1295,6 +1421,7 @@ Create all ${missingPages.length} missing pages now.`;
             [...pagesToGenerate, missingPageSpec],
             options
           );
+          pagesSinceProviderInit++;
 
           if (content) {
             const pagePath = path.join(this.outputDir, missingFile);
@@ -1311,8 +1438,41 @@ Create all ${missingPages.length} missing pages now.`;
             yield { type: 'file', message: missingFile, detail: pageTitle };
           }
         } catch (error) {
-          console.error(`[Local] ✗ Failed to generate missing page: ${missingFile}`);
-          pagesFailed++;
+          const err = error as Error;
+          // Handle sequence exhaustion
+          if (err.message.includes('No sequences left')) {
+            console.log(`[Local] Sequence exhausted, reinitializing provider and retrying...`);
+            try {
+              await initializeProvider();
+              const content = await this.generateSinglePage(
+                provider,
+                missingPageSpec,
+                [...pagesToGenerate, missingPageSpec],
+                options
+              );
+              pagesSinceProviderInit++;
+
+              if (content) {
+                const pagePath = path.join(this.outputDir, missingFile);
+                const pageDir = path.dirname(pagePath);
+                if (!fs.existsSync(pageDir)) {
+                  fs.mkdirSync(pageDir, { recursive: true });
+                }
+                fs.writeFileSync(pagePath, content, 'utf-8');
+                console.log(`[Local] ✓ Generated missing page (after retry): ${missingFile}`);
+                pagesGenerated++;
+                generatedFilenames.add(missingFile);
+                pagesToGenerate.push(missingPageSpec);
+                yield { type: 'file', message: missingFile, detail: pageTitle };
+              }
+            } catch (retryError) {
+              console.error(`[Local] ✗ Failed to generate missing page after retry: ${missingFile}`);
+              pagesFailed++;
+            }
+          } else {
+            console.error(`[Local] ✗ Failed to generate missing page: ${missingFile}`);
+            pagesFailed++;
+          }
         }
       }
     }
@@ -1897,6 +2057,334 @@ Return only the JSON, no markdown code blocks.`;
       .split(/[-_\/]/)
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ');
+  }
+
+  /**
+   * Plan wiki pages from discovery results
+   * Uses the hierarchical domain structure to create a comprehensive page plan
+   */
+  private async planPagesFromDiscovery(
+    provider: LLMProvider,
+    discoveryResult: DiscoveryResult,
+    options: WikiGenerationOptions
+  ): Promise<Array<{
+    title: string;
+    filename: string;
+    type: 'overview' | 'component' | 'api' | 'guide' | 'module' | 'config' | 'relationship';
+    context: string;
+    sourceFiles: string[];
+    section?: string;
+    domain?: string;
+  }>> {
+    const pages: Array<{
+      title: string;
+      filename: string;
+      type: 'overview' | 'component' | 'api' | 'guide' | 'module' | 'config' | 'relationship';
+      context: string;
+      sourceFiles: string[];
+      section?: string;
+      domain?: string;
+    }> = [];
+
+    // 1. Add architecture overview page
+    pages.push({
+      title: 'Architecture Overview',
+      filename: 'architecture.md',
+      type: 'overview',
+      context: `High-level architecture of ${discoveryResult.project.name}. Project type: ${discoveryResult.project.type}. Technologies: ${discoveryResult.project.technologies.join(', ')}. Cover system components, data flow, and integration points.`,
+      sourceFiles: discoveryResult.domains.flatMap(d => d.files.slice(0, 3)),
+      section: 'Architecture',
+    });
+
+    // 2. Add getting started page
+    pages.push({
+      title: 'Getting Started',
+      filename: 'getting-started.md',
+      type: 'guide',
+      context: `Setup and development guide for ${discoveryResult.project.name}. Include installation, configuration, and basic usage.`,
+      sourceFiles: ['README.md', 'package.json', '.env.example'].filter(f =>
+        discoveryResult.domains.some(d => d.files.includes(f))
+      ),
+      section: 'Guides',
+    });
+
+    // 3. Add pages for each section from discovery
+    // Create a map of domain IDs to domains for quick lookup
+    const domainMap = new Map(discoveryResult.domains.map(d => [d.id, d]));
+
+    for (const section of discoveryResult.wikiStructure.sections) {
+      // Find all domains in this section for component tables
+      const sectionDomains = discoveryResult.domains.filter(d =>
+        this.categoryToSection(d.category) === section.title
+      );
+
+      // Generate combined component tables for section overview
+      const sectionComponentTables = sectionDomains
+        .map(d => generateComponentTable(d))
+        .filter(t => t.length > 0)
+        .join('\n');
+
+      // Add section overview if multiple pages
+      if (section.pages.length > 1) {
+        let overviewContext = section.description;
+        if (sectionComponentTables) {
+          overviewContext += `\n\n## Component Reference\n\n${sectionComponentTables}`;
+        }
+
+        pages.push({
+          title: section.title,
+          filename: `${section.id}.md`,
+          type: 'overview',
+          context: overviewContext,
+          sourceFiles: section.pages.flatMap(p => p.sourcePaths).slice(0, 10),
+          section: section.title,
+        });
+      }
+
+      // Add pages for each domain in this section
+      for (const page of section.pages) {
+        // Skip if it's the same as section overview
+        if (page.slug === `${section.id}.md`) continue;
+
+        // Extract domain ID from page slug (e.g., "domain-id.md" -> "domain-id")
+        const domainId = page.slug.replace('.md', '').replace(/-\w+$/, '');
+        const domain = domainMap.get(domainId);
+
+        // Generate component table for this domain if available
+        let pageContext = page.description;
+        if (domain) {
+          const componentTable = generateComponentTable(domain);
+          if (componentTable) {
+            pageContext += `\n\n${componentTable}`;
+          }
+        }
+
+        pages.push({
+          title: page.title,
+          filename: page.slug,
+          type: page.pageType === 'overview' ? 'module' : page.pageType === 'feature' ? 'component' : 'module',
+          context: pageContext,
+          sourceFiles: page.sourcePaths,
+          section: section.title,
+        });
+      }
+    }
+
+    // 4. Add relationship pages if significant cross-domain interactions
+    if (discoveryResult.relationships.length > 5) {
+      pages.push({
+        title: 'Data Flow',
+        filename: 'data-flow.md',
+        type: 'relationship',
+        context: 'How data moves through the system. Include data transformations, storage patterns, and integration points.',
+        sourceFiles: discoveryResult.domains
+          .filter(d => d.category === 'data-layer' || d.category === 'core-application')
+          .flatMap(d => d.files.slice(0, 5)),
+        section: 'System Relationships',
+      });
+
+      pages.push({
+        title: 'Integration Points',
+        filename: 'integration-points.md',
+        type: 'relationship',
+        context: 'How modules connect and communicate. Include APIs, data contracts, and dependencies.',
+        sourceFiles: discoveryResult.domains
+          .filter(d => d.category === 'integration' || d.relatedDomains.length > 2)
+          .flatMap(d => d.files.slice(0, 5)),
+        section: 'System Relationships',
+      });
+    }
+
+    // 5. Ensure minimum page count by adding domain-specific pages
+    const minPages = Math.max(8, discoveryResult.domains.length);
+    if (pages.length < minPages) {
+      for (const domain of discoveryResult.domains) {
+        const existingPage = pages.find(p => p.filename === `${domain.id}.md`);
+        if (!existingPage && pages.length < minPages + 5) {
+          // Generate component table for this domain
+          const componentTable = generateComponentTable(domain);
+          let domainContext = `${domain.description}. ${domain.businessPurpose || ''}`;
+          if (componentTable) {
+            domainContext += `\n\n${componentTable}`;
+          }
+
+          pages.push({
+            title: domain.name,
+            filename: `${domain.id}.md`,
+            type: 'module',
+            context: domainContext,
+            sourceFiles: domain.files.slice(0, 10),
+            section: this.categoryToSection(domain.category),
+            domain: domain.id,
+          });
+        }
+      }
+    }
+
+    console.log(`[Local] Planned ${pages.length} pages from discovery (${discoveryResult.domains.length} domains)`);
+    return pages;
+  }
+
+  /**
+   * Map domain category to section name
+   */
+  private categoryToSection(category: string): string {
+    const sectionMap: Record<string, string> = {
+      'core-application': 'Core Application',
+      'presentation': 'User Interface',
+      'data-layer': 'Data Layer',
+      'batch-processing': 'Batch Processing',
+      'integration': 'Integration',
+      'configuration': 'Configuration',
+      'infrastructure': 'Infrastructure',
+      'documentation': 'Documentation',
+      'testing': 'Testing',
+    };
+    return sectionMap[category] || 'Components';
+  }
+
+  /**
+   * Generate enhanced hierarchical index from discovery results
+   */
+  private generateEnhancedIndex(
+    discoveryResult: DiscoveryResult,
+    pages: Array<{ title: string; filename: string; type: string; context: string; section?: string; domain?: string }>
+  ): string {
+    const lines: string[] = [];
+
+    // Header with project info
+    lines.push(`# ${discoveryResult.project.name}`);
+    lines.push('');
+    lines.push(discoveryResult.project.description);
+    lines.push('');
+
+    // Technology badges
+    if (discoveryResult.project.technologies.length > 0) {
+      lines.push('**Technologies:** ' + discoveryResult.project.technologies.slice(0, 8).join(' • '));
+      lines.push('');
+    }
+
+    // Project type indicator
+    lines.push(`**Project Type:** ${this.formatProjectType(discoveryResult.project.type)}`);
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+
+    // Overview section
+    lines.push('## Overview');
+    lines.push('');
+    lines.push('> High-level documentation and getting started guides.');
+    lines.push('');
+    const overviewPages = pages.filter(p => p.type === 'overview' || p.type === 'guide');
+    for (const page of overviewPages.slice(0, 5)) {
+      lines.push(`- 📚 [${page.title}](./${page.filename}) – ${this.truncateContext(page.context)}`);
+    }
+    lines.push('');
+
+    // Group remaining pages by section
+    const sectionPages = new Map<string, typeof pages>();
+    for (const page of pages) {
+      if (page.type === 'overview' || page.type === 'guide') continue;
+      const section = page.section || 'Components';
+      const existing = sectionPages.get(section) || [];
+      existing.push(page);
+      sectionPages.set(section, existing);
+    }
+
+    // Output each section
+    const sectionOrder = [
+      'Core Application',
+      'User Interface',
+      'Data Layer',
+      'Batch Processing',
+      'Integration',
+      'System Relationships',
+      'Configuration',
+      'Infrastructure',
+      'Components',
+    ];
+
+    for (const sectionName of sectionOrder) {
+      const sectionPageList = sectionPages.get(sectionName);
+      if (!sectionPageList || sectionPageList.length === 0) continue;
+
+      lines.push(`## ${sectionName}`);
+      lines.push('');
+
+      // Find matching section in discovery for description
+      const discoveredSection = discoveryResult.wikiStructure.sections.find(s => s.title === sectionName);
+      if (discoveredSection) {
+        lines.push(`> ${discoveredSection.description}`);
+        lines.push('');
+      }
+
+      for (const page of sectionPageList) {
+        const icon = this.getPageIcon(page.type);
+        lines.push(`- ${icon} [${page.title}](./${page.filename}) – ${this.truncateContext(page.context)}`);
+      }
+      lines.push('');
+    }
+
+    // Quick reference table
+    lines.push('---');
+    lines.push('');
+    lines.push('## Quick Reference');
+    lines.push('');
+    lines.push('| Domain | Description | Files | Category |');
+    lines.push('|--------|-------------|-------|----------|');
+
+    for (const domain of discoveryResult.domains.slice(0, 12)) {
+      const pageLink = pages.find(p => p.domain === domain.id || p.filename === `${domain.id}.md`);
+      const nameCell = pageLink ? `[${domain.name}](./${pageLink.filename})` : domain.name;
+      lines.push(`| ${nameCell} | ${this.truncateContext(domain.description, 40)} | ${domain.files.length} | ${domain.category} |`);
+    }
+
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+    lines.push(`*Generated by SemanticWiki with hierarchical discovery • ${discoveryResult.stats.totalFiles} files analyzed • ${discoveryResult.stats.totalDomains} domains discovered*`);
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Format project type for display
+   */
+  private formatProjectType(type: string): string {
+    const typeMap: Record<string, string> = {
+      'mainframe-cobol': '🖥️ Mainframe COBOL Application',
+      'web-application': '🌐 Web Application',
+      'api-service': '🔌 API Service',
+      'cli-tool': '⌨️ CLI Tool',
+      'library': '📦 Library',
+      'monorepo': '📁 Monorepo',
+      'unknown': '📄 Software Project',
+    };
+    return typeMap[type] || type;
+  }
+
+  /**
+   * Get icon for page type
+   */
+  private getPageIcon(type: string): string {
+    const iconMap: Record<string, string> = {
+      'overview': '📚',
+      'component': '⚙️',
+      'module': '📦',
+      'guide': '📝',
+      'config': '🔧',
+      'api': '🔌',
+      'relationship': '🔗',
+    };
+    return iconMap[type] || '📄';
+  }
+
+  /**
+   * Truncate context string for display
+   */
+  private truncateContext(context: string, maxLength: number = 60): string {
+    if (context.length <= maxLength) return context;
+    return context.slice(0, maxLength - 3) + '...';
   }
 
   /**

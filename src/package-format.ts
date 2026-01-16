@@ -1,5 +1,5 @@
 /**
- * ArchiWiki Portable Package Format (.archiwiki)
+ * SemanticWiki Portable Package Format (.semantics)
  *
  * A portable package format that bundles:
  * - Wiki documentation (markdown files)
@@ -53,7 +53,7 @@ export interface ExtractOptions {
 }
 
 /**
- * Create an ArchiWiki package from a wiki directory
+ * Create a SemanticWiki package from a wiki directory
  */
 export async function createPackage(options: PackageOptions): Promise<string> {
   const { wikiPath, outputPath, name, description, sourceRepo, includeRag = true } = options;
@@ -154,7 +154,7 @@ export async function createPackage(options: PackageOptions): Promise<string> {
   // Format: [manifest_length (4 bytes)][manifest JSON][file entries...]
   // Each file entry: [path_length (2 bytes)][path][content_length (4 bytes)][content]
 
-  const packagePath = outputPath.endsWith('.archiwiki') ? outputPath : `${outputPath}.archiwiki`;
+  const packagePath = outputPath.endsWith('.semantics') ? outputPath : `${outputPath}.semantics`;
 
   // Build the package buffer
   const chunks: Buffer[] = [];
@@ -204,7 +204,7 @@ export async function createPackage(options: PackageOptions): Promise<string> {
 }
 
 /**
- * Extract an ArchiWiki package to a directory
+ * Extract a SemanticWiki package to a directory
  */
 export async function extractPackage(options: ExtractOptions): Promise<PackageManifest> {
   const { packagePath, outputPath, wikiOnly = false } = options;

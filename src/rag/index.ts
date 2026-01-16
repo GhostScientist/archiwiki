@@ -22,6 +22,11 @@ import {
   DomainCategory,
   generateDomainContext
 } from '../ast-chunker.js';
+import {
+  ContextualRetrieval,
+  type ContextualRetrievalConfig,
+  type ContextualChunk
+} from './contextual-retrieval.js';
 
 // Configure transformers.js to use local cache
 env.cacheDir = './.semanticwiki-models';
@@ -58,6 +63,20 @@ export interface RAGConfig {
   useReranking?: boolean;
   /** RRF constant k for rank fusion (default: 60) */
   rrfK?: number;
+  /** Enable contextual retrieval for improved chunk understanding (default: false) */
+  useContextualRetrieval?: boolean;
+  /** Use local LLM for contextual retrieval instead of Claude API */
+  contextualLocal?: boolean;
+  /** Use Ollama server for contextual retrieval (requires contextualLocal: true) */
+  contextualUseOllama?: boolean;
+  /** Anthropic API key for contextual retrieval (falls back to ANTHROPIC_API_KEY env) */
+  contextualApiKey?: string;
+  /** Model for contextual retrieval (default: claude-3-haiku-20240307) */
+  contextualModel?: string;
+  /** Ollama host for local contextual retrieval */
+  contextualOllamaHost?: string;
+  /** Local model name for contextual retrieval */
+  contextualLocalModel?: string;
 }
 
 export interface BatchInfo {
@@ -92,6 +111,8 @@ export interface CodeChunk {
   isPublicApi?: boolean;
   /** Function/method signature */
   signature?: string;
+  /** Contextual prefix from contextual retrieval (LLM-generated) */
+  contextualPrefix?: string;
 }
 
 export interface SearchResult extends CodeChunk {
@@ -135,6 +156,8 @@ interface StoredMetadata {
   isPublicApi?: boolean;
   /** Function/method signature */
   signature?: string;
+  /** Contextual prefix from contextual retrieval */
+  contextualPrefix?: string;
 }
 
 interface IndexState {
@@ -230,6 +253,7 @@ export class RAGSystem {
   private astChunker: ASTChunker;
   private bm25Index: BM25Index | null = null;
   private embeddingModelName: string;
+  private contextualRetrieval: ContextualRetrieval | null = null;
 
   constructor(config: RAGConfig) {
     this.config = {
@@ -240,6 +264,7 @@ export class RAGSystem {
       useHybridSearch: true,  // Enable hybrid search by default
       useReranking: false,  // Disable reranking by default (slower)
       rrfK: 60,  // Standard RRF constant
+      useContextualRetrieval: false,  // Disable contextual retrieval by default
       ...config
     };
 
@@ -251,6 +276,20 @@ export class RAGSystem {
       minChunkSize: 100,
       extractDomainHints: this.config.extractDomainHints
     });
+
+    // Initialize contextual retrieval if enabled
+    if (this.config.useContextualRetrieval) {
+      this.contextualRetrieval = new ContextualRetrieval({
+        enabled: true,
+        useLocal: this.config.contextualLocal,
+        useOllama: this.config.contextualUseOllama,
+        apiKey: this.config.contextualApiKey,
+        model: this.config.contextualModel,
+        ollamaHost: this.config.contextualOllamaHost,
+        localModel: this.config.contextualLocalModel,
+        cacheDir: this.config.storePath,
+      });
+    }
 
     // Ensure cache directory exists
     if (!fs.existsSync(this.config.storePath)) {
@@ -614,6 +653,29 @@ export class RAGSystem {
       chunksToIndex = this.prioritizeChunks(chunks, this.config.maxChunks);
     }
 
+    // Apply contextual retrieval if enabled
+    if (this.contextualRetrieval && this.config.useContextualRetrieval) {
+      console.log(`  Enriching chunks with contextual retrieval...`);
+      try {
+        await this.contextualRetrieval.initialize();
+        const enrichedChunks = await this.contextualRetrieval.enrichChunks(
+          chunksToIndex as ASTChunk[],
+          this.config.repoPath
+        );
+        // Update chunks with contextual prefixes
+        chunksToIndex = enrichedChunks.map(ec => ({
+          ...ec,
+          contextualPrefix: ec.contextualPrefix,
+          // Use enriched content for embedding
+          content: ec.enrichedContent || ec.content,
+        }));
+        const stats = this.contextualRetrieval.getStats();
+        console.log(`  ✓ Contextual enrichment complete (${stats.cacheHits} cached)`);
+      } catch (err) {
+        console.warn(`  ⚠️  Contextual retrieval failed, continuing without: ${(err as Error).message}`);
+      }
+    }
+
     // Generate embeddings
     console.log(`  Generating embeddings for ${chunksToIndex.length} chunks...`);
     const embeddings = await this.generateEmbeddings(chunksToIndex);
@@ -650,7 +712,8 @@ export class RAGSystem {
           domainCategories: chunk.domainCategories,
           domainContext: chunk.domainContext,
           isPublicApi: chunk.isPublicApi,
-          signature: chunk.signature
+          signature: chunk.signature,
+          contextualPrefix: chunk.contextualPrefix
         });
       }
 
@@ -738,7 +801,8 @@ export class RAGSystem {
           domainCategories: chunk.domainCategories,
           domainContext: chunk.domainContext,
           isPublicApi: chunk.isPublicApi,
-          signature: chunk.signature
+          signature: chunk.signature,
+          contextualPrefix: chunk.contextualPrefix
         });
       });
     }
@@ -1658,7 +1722,8 @@ export class RAGSystem {
           domainCategories: chunk.domainCategories,
           domainContext: chunk.domainContext,
           isPublicApi: chunk.isPublicApi,
-          signature: chunk.signature
+          signature: chunk.signature,
+          contextualPrefix: chunk.contextualPrefix
         });
       }
 

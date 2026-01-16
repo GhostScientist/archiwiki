@@ -30,7 +30,7 @@ Model Context Protocol server for AI assistant integration:
 
 #### Portable Package Format (`semanticwiki pack/unpack`)
 Bundle wikis with RAG indexes for sharing:
-- `.archiwiki` compressed format with manifest
+- `.semantics` compressed format with manifest
 - Includes wiki content + embeddings + BM25 index
 - Extract wiki-only or full package
 
