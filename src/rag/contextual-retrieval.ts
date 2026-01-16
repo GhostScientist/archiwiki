@@ -4,9 +4,10 @@
  * Implements Anthropic's Contextual Retrieval technique to improve RAG quality.
  * For each chunk, generates a brief context explanation using the full file content.
  *
- * Supports both:
+ * Supports three modes:
  * - Claude API (with prompt caching for cost efficiency)
- * - Local LLMs (via Ollama or node-llama-cpp)
+ * - Ollama (external local server)
+ * - Bundled local (node-llama-cpp, no external dependencies)
  *
  * Reference: https://www.anthropic.com/news/contextual-retrieval
  */
@@ -15,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import type { ASTChunk } from '../ast-chunker.js';
+import type { LLMProvider } from '../llm/types.js';
 
 /**
  * Configuration for contextual retrieval
@@ -24,15 +26,19 @@ export interface ContextualRetrievalConfig {
   enabled: boolean;
   /** Use local LLM instead of Claude API */
   useLocal?: boolean;
+  /** Use Ollama server (requires useLocal: true) */
+  useOllama?: boolean;
   /** Anthropic API key (for Claude API mode) */
   apiKey?: string;
   /** Claude model to use (default: claude-3-haiku for speed/cost) */
   model?: string;
-  /** Ollama host URL (for local mode with Ollama) */
+  /** Ollama host URL (for Ollama mode) */
   ollamaHost?: string;
-  /** Local model name (for Ollama) */
+  /** Local model name (for Ollama or bundled local) */
   localModel?: string;
-  /** Maximum concurrent requests (default: 5) */
+  /** Model family for bundled local (default: gpt-oss) */
+  modelFamily?: string;
+  /** Maximum concurrent requests (default: 5 for API, 1 for local) */
   concurrency?: number;
   /** Cache generated contexts to avoid regeneration */
   cacheDir?: string;
@@ -78,6 +84,7 @@ Answer only with the context, nothing else. Keep it under 100 words.`;
 export class ContextualRetrieval {
   private config: Required<ContextualRetrievalConfig>;
   private anthropicClient?: Anthropic;
+  private localProvider?: LLMProvider;
   private contextCache: Map<string, string> = new Map();
   private fileContentCache: Map<string, string> = new Map();
 
@@ -85,11 +92,13 @@ export class ContextualRetrieval {
     this.config = {
       enabled: config.enabled,
       useLocal: config.useLocal ?? false,
+      useOllama: config.useOllama ?? false,
       apiKey: config.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '',
       model: config.model ?? 'claude-3-haiku-20240307',
       ollamaHost: config.ollamaHost ?? 'http://localhost:11434',
       localModel: config.localModel ?? 'qwen2.5-coder:7b',
-      concurrency: config.concurrency ?? 5,
+      modelFamily: config.modelFamily ?? 'gpt-oss',
+      concurrency: config.concurrency ?? (config.useLocal ? 1 : 5),
       cacheDir: config.cacheDir ?? '',
       onProgress: config.onProgress ?? (() => {}),
     };
@@ -112,15 +121,31 @@ export class ContextualRetrieval {
         throw new Error('Anthropic API key required for contextual retrieval. Set ANTHROPIC_API_KEY or use --contextual-local');
       }
       this.anthropicClient = new Anthropic({ apiKey: this.config.apiKey });
-    } else {
+      console.log('  Using Claude API for contextual retrieval');
+    } else if (this.config.useOllama) {
       // Verify Ollama is available
       try {
         const response = await fetch(`${this.config.ollamaHost}/api/tags`);
         if (!response.ok) {
           throw new Error(`Ollama not available at ${this.config.ollamaHost}`);
         }
+        console.log(`  Using Ollama (${this.config.localModel}) for contextual retrieval`);
       } catch (error) {
         throw new Error(`Cannot connect to Ollama at ${this.config.ollamaHost}: ${(error as Error).message}`);
+      }
+    } else {
+      // Use bundled local inference (node-llama-cpp)
+      console.log('  Initializing bundled local LLM for contextual retrieval...');
+      try {
+        const { createLLMProvider } = await import('../llm/index.js');
+        this.localProvider = await createLLMProvider({
+          fullLocal: true,
+          modelFamily: this.config.modelFamily as 'gpt-oss' | 'qwen' | 'lfm',
+          localModel: this.config.localModel,
+        });
+        console.log(`  Using bundled local LLM for contextual retrieval`);
+      } catch (error) {
+        throw new Error(`Failed to initialize local LLM: ${(error as Error).message}`);
       }
     }
   }
@@ -158,11 +183,12 @@ export class ContextualRetrieval {
     const enrichedChunks: ContextualChunk[] = [];
     let processedCount = 0;
 
-    // Process files in batches
+    // Process files in batches (or sequentially for local)
     const fileEntries = Array.from(chunksByFile.entries());
+    const concurrency = this.config.useLocal && !this.config.useOllama ? 1 : this.config.concurrency;
 
-    for (let i = 0; i < fileEntries.length; i += this.config.concurrency) {
-      const batch = fileEntries.slice(i, i + this.config.concurrency);
+    for (let i = 0; i < fileEntries.length; i += concurrency) {
+      const batch = fileEntries.slice(i, i + concurrency);
 
       const batchPromises = batch.map(async ([filePath, fileChunks]) => {
         // Read file content (with caching)
@@ -238,10 +264,12 @@ export class ContextualRetrieval {
       .replace('{WHOLE_DOCUMENT}', this.truncateContent(fileContent, 8000))
       .replace('{CHUNK_CONTENT}', this.truncateContent(chunk.content, 2000));
 
-    if (this.config.useLocal) {
-      return this.generateContextLocal(prompt);
-    } else {
+    if (!this.config.useLocal) {
       return this.generateContextClaude(prompt, fileContent);
+    } else if (this.config.useOllama) {
+      return this.generateContextOllama(prompt);
+    } else {
+      return this.generateContextBundledLocal(prompt);
     }
   }
 
@@ -250,28 +278,20 @@ export class ContextualRetrieval {
    */
   private async generateContextClaude(
     prompt: string,
-    fileContent: string
+    _fileContent: string
   ): Promise<string> {
     if (!this.anthropicClient) {
       throw new Error('Anthropic client not initialized');
     }
 
     try {
-      // Use prompt caching for the file content (which is repeated for each chunk)
       const response = await this.anthropicClient.messages.create({
         model: this.config.model,
         max_tokens: 150,
         messages: [
           {
             role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: prompt,
-                // Enable caching for the document portion
-                // Note: Actual caching syntax may vary based on SDK version
-              },
-            ],
+            content: prompt,
           },
         ],
       });
@@ -284,9 +304,9 @@ export class ContextualRetrieval {
   }
 
   /**
-   * Generate context using local Ollama
+   * Generate context using Ollama
    */
-  private async generateContextLocal(prompt: string): Promise<string> {
+  private async generateContextOllama(prompt: string): Promise<string> {
     try {
       const response = await fetch(`${this.config.ollamaHost}/api/generate`, {
         method: 'POST',
@@ -310,6 +330,26 @@ export class ContextualRetrieval {
       return data.response?.trim() || '';
     } catch (error) {
       throw new Error(`Ollama error: ${(error as Error).message}`);
+    }
+  }
+
+  /**
+   * Generate context using bundled local LLM (node-llama-cpp)
+   */
+  private async generateContextBundledLocal(prompt: string): Promise<string> {
+    if (!this.localProvider) {
+      throw new Error('Local LLM provider not initialized');
+    }
+
+    try {
+      const response = await this.localProvider.complete(prompt, {
+        maxTokens: 150,
+        temperature: 0.3,
+      });
+
+      return response.trim();
+    } catch (error) {
+      throw new Error(`Local LLM error: ${(error as Error).message}`);
     }
   }
 
@@ -420,6 +460,15 @@ export class ContextualRetrieval {
       cacheSize: this.contextCache.size,
       filesProcessed: this.fileContentCache.size,
     };
+  }
+
+  /**
+   * Cleanup resources
+   */
+  async cleanup(): Promise<void> {
+    if (this.localProvider && 'cleanup' in this.localProvider) {
+      await (this.localProvider as any).cleanup();
+    }
   }
 }
 

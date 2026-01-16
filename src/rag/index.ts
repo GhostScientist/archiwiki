@@ -67,6 +67,8 @@ export interface RAGConfig {
   useContextualRetrieval?: boolean;
   /** Use local LLM for contextual retrieval instead of Claude API */
   contextualLocal?: boolean;
+  /** Use Ollama server for contextual retrieval (requires contextualLocal: true) */
+  contextualUseOllama?: boolean;
   /** Anthropic API key for contextual retrieval (falls back to ANTHROPIC_API_KEY env) */
   contextualApiKey?: string;
   /** Model for contextual retrieval (default: claude-3-haiku-20240307) */
@@ -280,6 +282,7 @@ export class RAGSystem {
       this.contextualRetrieval = new ContextualRetrieval({
         enabled: true,
         useLocal: this.config.contextualLocal,
+        useOllama: this.config.contextualUseOllama,
         apiKey: this.config.contextualApiKey,
         model: this.config.contextualModel,
         ollamaHost: this.config.contextualOllamaHost,

@@ -313,6 +313,7 @@ program
         // Contextual retrieval options
         useContextualRetrieval: options.contextual || options.contextualLocal,
         contextualLocal: options.contextualLocal,
+        contextualUseOllama: options.contextualLocal && options.useOllama,  // Use Ollama if both flags set
         contextualModel: options.contextualModel,
         contextualOllamaHost: options.ollamaHost,  // Reuse Ollama host if set
         contextualLocalModel: options.contextualOllamaModel

@@ -226,6 +226,7 @@ export class ArchitecturalWikiAgent {
       // Contextual retrieval options
       useContextualRetrieval: options.useContextualRetrieval,
       contextualLocal: options.contextualLocal,
+      contextualUseOllama: options.contextualUseOllama,
       contextualApiKey: options.contextualApiKey || this.apiKey,
       contextualModel: options.contextualModel,
       contextualOllamaHost: options.contextualOllamaHost || options.ollamaHost,
@@ -780,6 +781,7 @@ export class ArchitecturalWikiAgent {
         // Contextual retrieval options
         useContextualRetrieval: options.useContextualRetrieval,
         contextualLocal: options.contextualLocal,
+        contextualUseOllama: options.contextualUseOllama,
         contextualApiKey: options.contextualApiKey || this.apiKey,
         contextualModel: options.contextualModel,
         contextualOllamaHost: options.contextualOllamaHost || options.ollamaHost,
@@ -1161,6 +1163,7 @@ Create all ${missingPages.length} missing pages now.`;
         // Contextual retrieval options
         useContextualRetrieval: options.useContextualRetrieval,
         contextualLocal: options.contextualLocal,
+        contextualUseOllama: options.contextualUseOllama,
         contextualApiKey: options.contextualApiKey || this.apiKey,
         contextualModel: options.contextualModel,
         contextualOllamaHost: options.contextualOllamaHost || options.ollamaHost,
