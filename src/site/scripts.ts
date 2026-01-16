@@ -2265,98 +2265,69 @@ export function getClientScripts(features: Features): string {
     const questionLower = question.toLowerCase();
     const topResult = context[0];
 
-    // Detect question type for better response framing
-    const isHowQuestion = /^how/i.test(question);
-    const isWhatQuestion = /^what/i.test(question);
-    const isWhyQuestion = /^why/i.test(question);
-    const isWhereQuestion = /^where/i.test(question);
-    const isCanQuestion = /^(can|does|is|are|do)/i.test(question);
+    // Helper to clean markdown from text
+    function cleanMarkdown(text) {
+      return text
+        .replace(/^#+\\s+[^\\n]*/gm, '') // Remove markdown headers
+        .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1') // [text](url) -> text
+        .replace(/\\*\\*([^*]+)\\*\\*/g, '$1') // **bold** -> bold
+        .replace(/\\*([^*]+)\\*/g, '$1') // *italic* -> italic
+        .replace(/\\\`([^\\\`]+)\\\`/g, '$1') // \`code\` -> code
+        .replace(/\\n{3,}/g, '\\n\\n') // Multiple newlines -> double
+        .trim();
+    }
 
-    // Extract key terms from the question for better matching
-    const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'how', 'why', 'where', 'when', 'which', 'who', 'this', 'that', 'these', 'those', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by']);
+    // Extract key terms from the question
+    const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'how', 'why', 'where', 'when', 'which', 'who', 'this', 'that', 'these', 'those', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'you', 'do', 'run', 'can', 'does']);
     const questionWords = questionLower
       .replace(/[^a-z0-9\\s]/g, '')
       .split(/\\s+/)
       .filter(w => w.length > 2 && !stopWords.has(w));
 
-    // Split content into paragraphs and sentences for better extraction
-    const paragraphs = topResult.content.split(/\\n\\n+/).filter(p => p.trim().length > 30);
-    const allSentences = topResult.content.split(/(?<=[.!?])\\s+/).filter(s => s.trim().length > 20);
+    // Clean the content first
+    const cleanContent = cleanMarkdown(topResult.content);
 
-    // Score paragraphs by relevance to question
-    const scoredParagraphs = paragraphs.map(p => {
-      const pLower = p.toLowerCase();
-      let score = 0;
-      for (const word of questionWords) {
-        const regex = new RegExp('\\\\b' + word + '\\\\b', 'gi');
-        const matches = pLower.match(regex);
-        if (matches) score += matches.length * 2;
-      }
-      // Boost first paragraph (often contains overview/definition)
-      if (paragraphs.indexOf(p) === 0) score += 1;
-      return { text: p.trim(), score };
-    }).filter(p => p.score > 0).sort((a, b) => b.score - a.score);
+    // Split into sentences
+    const sentences = cleanContent
+      .split(/(?<=[.!?])\\s+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 15 && s.length < 500);
 
-    // Score individual sentences for precise answers
-    const scoredSentences = allSentences.map(s => {
+    // Score sentences by relevance
+    const scoredSentences = sentences.map(s => {
       const sLower = s.toLowerCase();
       let score = 0;
       for (const word of questionWords) {
         if (sLower.includes(word)) score += 1;
       }
-      return { text: s.trim(), score };
-    }).filter(s => s.score > 0).sort((a, b) => b.score - a.score);
+      return { text: s, score };
+    }).sort((a, b) => b.score - a.score);
 
+    // Build answer from best sentences
     let answer = '';
+    const relevantSentences = scoredSentences.filter(s => s.score > 0).slice(0, 3);
 
-    // Build the main answer content
-    if (scoredParagraphs.length > 0 && scoredParagraphs[0].score >= 2) {
-      // We have a highly relevant paragraph - use it
-      const bestParagraph = scoredParagraphs[0].text;
-
-      // Clean up and limit the paragraph
-      const cleanParagraph = bestParagraph
-        .replace(/^#+\\s+.*\\n/g, '') // Remove markdown headers
-        .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1') // Convert links to plain text
-        .replace(/\\*\\*([^*]+)\\*\\*/g, '$1') // Remove bold
-        .replace(/\\\`([^\\\`]+)\\\`/g, '$1') // Remove code formatting
-        .trim();
-
-      // Take first 2-3 sentences or ~400 chars
-      const sentences = cleanParagraph.split(/(?<=[.!?])\\s+/);
-      const excerpt = sentences.slice(0, 3).join(' ').slice(0, 500);
-
-      answer = excerpt + (cleanParagraph.length > 500 ? '...' : '');
-    } else if (scoredSentences.length > 0) {
-      // Use best matching sentences
-      const topSentences = scoredSentences.slice(0, 4).map(s => s.text);
-      answer = topSentences.join(' ');
+    if (relevantSentences.length > 0) {
+      answer = relevantSentences.map(s => s.text).join(' ');
     } else {
-      // Fallback: use first meaningful paragraph
-      const firstPara = paragraphs[0] || allSentences.slice(0, 3).join(' ');
-      const cleanFirst = firstPara
-        .replace(/^#+\\s+.*\\n/g, '')
-        .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1')
-        .slice(0, 400);
-      answer = cleanFirst + (firstPara.length > 400 ? '...' : '');
+      // No matches - use first few sentences as overview
+      answer = sentences.slice(0, 2).join(' ');
     }
 
-    // Add source attribution
-    answer += '\\n\\n*From: ' + topResult.title + '*';
+    // Ensure answer doesn't end abruptly
+    if (answer && !answer.match(/[.!?]$/)) {
+      answer += '.';
+    }
 
-    // Add related topics if we have more context
+    // Add source - just the title, clean
+    answer += '\\n\\n*Source: ' + topResult.title + '*';
+
+    // Add related pages (skip the first one since we just showed it)
     if (context.length > 1) {
-      answer += '\\n\\n**For more details, see:**\\n';
-      for (let i = 0; i < Math.min(context.length, 3); i++) {
+      answer += '\\n\\n**Related pages:**';
+      for (let i = 1; i < Math.min(context.length, 4); i++) {
         const ctx = context[i];
-        // Extract first meaningful sentence as description
-        const desc = ctx.content
-          .split(/(?<=[.!?])\\s+/)[0]
-          ?.replace(/^#+\\s+.*/, '')
-          ?.replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1')
-          ?.trim()
-          ?.slice(0, 80);
-        answer += '- **' + ctx.title + '**' + (desc ? ': ' + desc + '...' : '') + '\\n';
+        answer += '\\n- ' + ctx.title;
       }
     }
 

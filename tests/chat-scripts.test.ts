@@ -217,7 +217,7 @@ describe('Chat Client Scripts', () => {
   });
 
   describe('Keyword Search Fallback', () => {
-    const scripts = getClientScripts({ aiChat: true });
+    const scripts = getClientScripts({ aiChat: true, search: true });
 
     it('should fallback to keyword search', () => {
       expect(scripts).toContain('state.searchIndex');
@@ -271,8 +271,8 @@ describe('Chat Client Scripts', () => {
 
     it('should handle intelligent fallback response', () => {
       expect(scripts).toContain("generateIntelligentFallback");
-      // Fallback extracts relevant content from context
-      expect(scripts).toContain("scoredParagraphs");
+      // Fallback extracts relevant content from context using scored sentences
+      expect(scripts).toContain("scoredSentences");
     });
 
     it('should provide no-result fallback', () => {

@@ -291,7 +291,7 @@ describe('Context Search Relevance', () => {
 });
 
 describe('Keyword Search Fallback', () => {
-  const scripts = getClientScripts({ aiChat: true });
+  const scripts = getClientScripts({ aiChat: true, search: true });
 
   it('should fallback when semantic search has few results', () => {
     expect(scripts).toContain('results.length < 3 && state.searchIndex');
