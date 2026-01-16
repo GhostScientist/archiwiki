@@ -135,15 +135,18 @@ export class ContextualRetrieval {
       }
     } else {
       // Use bundled local inference (node-llama-cpp)
+      // Use the 'completion' model family (Qwen2.5-Coder-1.5B) instead of gpt-oss
+      // because gpt-oss has function-calling tokens that cause empty responses
+      // for simple text completion tasks
       console.log('  Initializing bundled local LLM for contextual retrieval...');
       try {
         const { createLLMProvider } = await import('../llm/index.js');
-        // Don't pass localModel - let it use the default gpt-oss model
+        // Use 'completion' family - smaller model optimized for text completion
         this.localProvider = await createLLMProvider({
           fullLocal: true,
-          modelFamily: 'gpt-oss',
+          modelFamily: 'completion',
         });
-        console.log(`  Using bundled local LLM for contextual retrieval`);
+        console.log(`  Using bundled local LLM (Qwen2.5-Coder) for contextual retrieval`);
       } catch (error) {
         throw new Error(`Failed to initialize local LLM: ${(error as Error).message}`);
       }
@@ -204,11 +207,11 @@ export class ContextualRetrieval {
           if ('shutdown' in this.localProvider) {
             await (this.localProvider as any).shutdown();
           }
-          // Reinitialize
+          // Reinitialize with 'completion' family (Qwen2.5-Coder-1.5B)
           const { createLLMProvider } = await import('../llm/index.js');
           this.localProvider = await createLLMProvider({
             fullLocal: true,
-            modelFamily: 'gpt-oss',
+            modelFamily: 'completion',
           });
           localChunksSinceReset = 0;
           sequenceResetCount++;

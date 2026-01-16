@@ -195,8 +195,10 @@ export interface ModelRecommendation {
 
 /**
  * Model family type for local models
+ * - 'gpt-oss': Large agentic model (21B) with tool calling for wiki generation
+ * - 'completion': Small fast model (1.5B) for text completion tasks like contextual retrieval
  */
-export type ModelFamily = 'gpt-oss';
+export type ModelFamily = 'gpt-oss' | 'completion';
 
 /**
  * Options for creating an LLM provider
@@ -213,7 +215,7 @@ export interface CreateProviderOptions {
   // Local options
   modelPath?: string;
   localModel?: string;
-  modelFamily?: ModelFamily; // 'gpt-oss' (21B model)
+  modelFamily?: ModelFamily; // 'gpt-oss' (21B) or 'completion' (1.5B)
   gpuLayers?: number;
   contextSize?: number;
   threads?: number;

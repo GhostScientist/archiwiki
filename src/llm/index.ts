@@ -61,6 +61,7 @@ export async function createLLMProvider(options: CreateProviderOptions = {}): Pr
       const family = options.modelFamily || 'gpt-oss';
       const familyNames: Record<string, string> = {
         'gpt-oss': 'GPT-OSS (21B)',
+        'completion': 'Qwen2.5-Coder (1.5B)',
         'qwen': 'Qwen',
         'lfm': 'LFM (LiquidAI)',
       };
