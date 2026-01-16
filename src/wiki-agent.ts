@@ -10,7 +10,7 @@ import { MCPConfigManager } from './mcp-config.js';
 import { RAGSystem } from './rag/index.js';
 import { WIKI_SYSTEM_PROMPT } from './prompts/wiki-system.js';
 import { createLLMProvider, type LLMProvider, type LLMMessage, type LLMTool } from './llm/index.js';
-import { CodebaseDiscovery, generateHierarchicalIndex, type DiscoveryResult } from './discovery/index.js';
+import { CodebaseDiscovery, generateHierarchicalIndex, generateComponentTable, type DiscoveryResult, type DiscoveredDomain } from './discovery/index.js';
 
 export interface WikiGenerationOptions {
   repoUrl: string;
@@ -2008,14 +2008,33 @@ Return only the JSON, no markdown code blocks.`;
     });
 
     // 3. Add pages for each section from discovery
+    // Create a map of domain IDs to domains for quick lookup
+    const domainMap = new Map(discoveryResult.domains.map(d => [d.id, d]));
+
     for (const section of discoveryResult.wikiStructure.sections) {
+      // Find all domains in this section for component tables
+      const sectionDomains = discoveryResult.domains.filter(d =>
+        this.categoryToSection(d.category) === section.title
+      );
+
+      // Generate combined component tables for section overview
+      const sectionComponentTables = sectionDomains
+        .map(d => generateComponentTable(d))
+        .filter(t => t.length > 0)
+        .join('\n');
+
       // Add section overview if multiple pages
       if (section.pages.length > 1) {
+        let overviewContext = section.description;
+        if (sectionComponentTables) {
+          overviewContext += `\n\n## Component Reference\n\n${sectionComponentTables}`;
+        }
+
         pages.push({
           title: section.title,
           filename: `${section.id}.md`,
           type: 'overview',
-          context: section.description,
+          context: overviewContext,
           sourceFiles: section.pages.flatMap(p => p.sourcePaths).slice(0, 10),
           section: section.title,
         });
@@ -2026,11 +2045,24 @@ Return only the JSON, no markdown code blocks.`;
         // Skip if it's the same as section overview
         if (page.slug === `${section.id}.md`) continue;
 
+        // Extract domain ID from page slug (e.g., "domain-id.md" -> "domain-id")
+        const domainId = page.slug.replace('.md', '').replace(/-\w+$/, '');
+        const domain = domainMap.get(domainId);
+
+        // Generate component table for this domain if available
+        let pageContext = page.description;
+        if (domain) {
+          const componentTable = generateComponentTable(domain);
+          if (componentTable) {
+            pageContext += `\n\n${componentTable}`;
+          }
+        }
+
         pages.push({
           title: page.title,
           filename: page.slug,
           type: page.pageType === 'overview' ? 'module' : page.pageType === 'feature' ? 'component' : 'module',
-          context: page.description,
+          context: pageContext,
           sourceFiles: page.sourcePaths,
           section: section.title,
         });
@@ -2068,11 +2100,18 @@ Return only the JSON, no markdown code blocks.`;
       for (const domain of discoveryResult.domains) {
         const existingPage = pages.find(p => p.filename === `${domain.id}.md`);
         if (!existingPage && pages.length < minPages + 5) {
+          // Generate component table for this domain
+          const componentTable = generateComponentTable(domain);
+          let domainContext = `${domain.description}. ${domain.businessPurpose || ''}`;
+          if (componentTable) {
+            domainContext += `\n\n${componentTable}`;
+          }
+
           pages.push({
             title: domain.name,
             filename: `${domain.id}.md`,
             type: 'module',
-            context: `${domain.description}. ${domain.businessPurpose || ''}`,
+            context: domainContext,
             sourceFiles: domain.files.slice(0, 10),
             section: this.categoryToSection(domain.category),
             domain: domain.id,

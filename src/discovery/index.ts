@@ -46,6 +46,10 @@ export interface DiscoveredComponent {
   type: ComponentType;
   filePath: string;
   description?: string;
+  /** For JCL jobs: the program/utility executed (IDCAMS, IEBGENER, etc.) */
+  program?: string;
+  /** Brief function description extracted from comments or inferred */
+  function?: string;
   dependencies: string[];
   dependents: string[];
 }
@@ -676,6 +680,38 @@ export class CodebaseDiscovery {
   }
 
   /**
+   * Check if a file is documentation/noise that should be excluded from component listings
+   */
+  private isDocumentationFile(file: string): boolean {
+    const fileName = path.basename(file).toLowerCase();
+    const ext = path.extname(file).toLowerCase();
+
+    // Documentation file extensions
+    const docExtensions = ['.md', '.txt', '.rst', '.adoc', '.pdf', '.doc', '.docx'];
+    if (docExtensions.includes(ext)) {
+      return true;
+    }
+
+    // Common documentation file names
+    const docFileNames = [
+      'readme', 'license', 'changelog', 'contributing', 'authors',
+      'copying', 'todo', 'history', 'news', 'thanks', 'credits',
+      'security', 'code_of_conduct', 'codeowners', 'makefile'
+    ];
+    const baseNameLower = fileName.replace(ext, '');
+    if (docFileNames.includes(baseNameLower)) {
+      return true;
+    }
+
+    // Hidden config files
+    if (fileName.startsWith('.')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Extract components from files
    */
   private async extractComponents(
@@ -684,13 +720,18 @@ export class CodebaseDiscovery {
   ): Promise<DiscoveredComponent[]> {
     const components: DiscoveredComponent[] = [];
 
-    for (const file of files.slice(0, 50)) {
-      // Limit for performance
+    // Filter out documentation/noise files - only include actual source code
+    const sourceFiles = files.filter(f => !this.isDocumentationFile(f));
+
+    for (const file of sourceFiles.slice(0, 100)) {
+      // Increased limit for better coverage
       const fullPath = path.join(basePath, file);
       const ext = path.extname(file).toLowerCase();
       const fileName = path.basename(file, ext);
 
       let type: ComponentType = 'unknown';
+      let program: string | undefined;
+      let functionDesc: string | undefined;
 
       // Detect component type
       if (file.includes('controller') || file.includes('handler')) {
@@ -711,27 +752,228 @@ export class CodebaseDiscovery {
         type = 'test';
       } else if (ext === '.jcl') {
         type = 'job';
+        // Extract program and function from JCL content
+        const jclInfo = this.extractJclInfo(fullPath, fileName);
+        program = jclInfo.program;
+        functionDesc = jclInfo.function;
       } else if (ext === '.bms') {
         type = 'screen';
+        functionDesc = this.inferBmsFunction(fileName);
       } else if (ext === '.cpy') {
         type = 'copybook';
+        functionDesc = this.inferCopybookFunction(fileName);
       } else if (ext === '.sh' || ext === '.bash') {
         type = 'script';
       } else if (ext === '.cbl' || ext === '.cob') {
         type = 'entrypoint';
+        functionDesc = this.extractCobolFunction(fullPath, fileName);
       }
 
       components.push({
         name: fileName,
         type,
         filePath: file,
-        description: undefined,
+        description: functionDesc,
+        program,
+        function: functionDesc,
         dependencies: [],
         dependents: [],
       });
     }
 
     return components;
+  }
+
+  /**
+   * Extract program and function from JCL file content
+   */
+  private extractJclInfo(fullPath: string, fileName: string): { program?: string; function?: string } {
+    try {
+      const content = fs.readFileSync(fullPath, 'utf-8').toUpperCase();
+
+      // Extract program from EXEC PGM= or EXEC statement
+      let program: string | undefined;
+      const pgmMatch = content.match(/EXEC\s+PGM=(\w+)/);
+      if (pgmMatch) {
+        program = pgmMatch[1];
+      } else {
+        // Check for common utilities
+        if (content.includes('IDCAMS')) program = 'IDCAMS';
+        else if (content.includes('IEBGENER')) program = 'IEBGENER';
+        else if (content.includes('IEFBR14')) program = 'IEFBR14';
+        else if (content.includes('SORT')) program = 'SORT';
+        else if (content.includes('IKJEFT01')) program = 'IKJEFT01';
+        else if (content.includes('DFSRRC00')) program = 'DFSRRC00';
+      }
+
+      // Infer function from job name patterns and content
+      let functionDesc = this.inferJclFunction(fileName, content);
+
+      return { program, function: functionDesc };
+    } catch {
+      return { function: this.inferJclFunction(fileName, '') };
+    }
+  }
+
+  /**
+   * Infer JCL job function from name and content patterns
+   */
+  private inferJclFunction(jobName: string, content: string): string {
+    const name = jobName.toUpperCase();
+
+    // Common JCL job name patterns
+    const patterns: Array<{ pattern: RegExp; function: string }> = [
+      { pattern: /USRSEC|SECURITY|SEC/i, function: 'Load/Manage User Security' },
+      { pattern: /DEFGDG|GDG/i, function: 'Setup GDG Bases' },
+      { pattern: /ACCTFILE|ACCT/i, function: 'Refresh Account Master' },
+      { pattern: /CARDFILE|CARD(?!DEMO)/i, function: 'Refresh Card Master' },
+      { pattern: /CUSTFILE|CUST/i, function: 'Refresh Customer Master' },
+      { pattern: /DISCGRP|DISCL/i, function: 'Load Disclosure Group File' },
+      { pattern: /TRANFILE|TRNFILE/i, function: 'Load Transaction Master' },
+      { pattern: /TRANCATG|TRANCAT/i, function: 'Load Transaction Category Types' },
+      { pattern: /TRANTYPE|TRNTYPE/i, function: 'Load Transaction Type File' },
+      { pattern: /XREFFILE|XREF/i, function: 'Account/Card/Customer Cross Reference' },
+      { pattern: /CLOSEFIL|CLOSE/i, function: 'Close VSAM Files in CICS' },
+      { pattern: /TCATBALF?|CATBAL/i, function: 'Refresh Transaction Category Balance' },
+      { pattern: /LISTCAT/i, function: 'List VSAM Catalog Entries' },
+      { pattern: /OPENFIL|OPEN/i, function: 'Open VSAM Files in CICS' },
+      { pattern: /READCARD/i, function: 'Read Card Master File' },
+      { pattern: /BACKUP|BKP/i, function: 'Backup Data Files' },
+      { pattern: /RESTORE|RST/i, function: 'Restore Data Files' },
+      { pattern: /LOAD/i, function: 'Initial Data Load' },
+      { pattern: /DAILY|DLY/i, function: 'Daily Processing' },
+      { pattern: /WEEKLY|WKY/i, function: 'Weekly Processing' },
+      { pattern: /MONTHLY|MTH/i, function: 'Monthly Processing' },
+      { pattern: /REPORT|RPT/i, function: 'Generate Reports' },
+      { pattern: /DELETE|DEL/i, function: 'Delete/Cleanup Records' },
+      { pattern: /CREATE|CRT/i, function: 'Create Data Structures' },
+    ];
+
+    for (const { pattern, function: func } of patterns) {
+      if (pattern.test(name)) {
+        return func;
+      }
+    }
+
+    // Check content for clues
+    if (content.includes('DEFINE CLUSTER')) return 'Define VSAM Cluster';
+    if (content.includes('REPRO')) return 'Copy/Refresh Data';
+    if (content.includes('DELETE')) return 'Delete Data/Files';
+    if (content.includes('PRINT')) return 'Print/List Data';
+
+    return 'Batch Job Processing';
+  }
+
+  /**
+   * Infer BMS screen function from name
+   */
+  private inferBmsFunction(fileName: string): string {
+    const name = fileName.toUpperCase();
+
+    const patterns: Array<{ pattern: RegExp; function: string }> = [
+      { pattern: /MENU/i, function: 'Main Menu Screen' },
+      { pattern: /SIGNON|LOGIN|LOGON/i, function: 'Sign-on/Login Screen' },
+      { pattern: /ACCT/i, function: 'Account Display/Entry Screen' },
+      { pattern: /CARD/i, function: 'Card Information Screen' },
+      { pattern: /CUST/i, function: 'Customer Information Screen' },
+      { pattern: /TRAN/i, function: 'Transaction Entry/Display Screen' },
+      { pattern: /REPORT|RPT/i, function: 'Report Display Screen' },
+      { pattern: /ADMIN/i, function: 'Administration Screen' },
+      { pattern: /HELP/i, function: 'Help Screen' },
+      { pattern: /ERROR|ERR/i, function: 'Error Display Screen' },
+    ];
+
+    for (const { pattern, function: func } of patterns) {
+      if (pattern.test(name)) {
+        return func;
+      }
+    }
+
+    return 'CICS Screen Map';
+  }
+
+  /**
+   * Infer copybook function from name
+   */
+  private inferCopybookFunction(fileName: string): string {
+    const name = fileName.toUpperCase();
+
+    const patterns: Array<{ pattern: RegExp; function: string }> = [
+      { pattern: /ACCT/i, function: 'Account Record Layout' },
+      { pattern: /CARD/i, function: 'Card Record Layout' },
+      { pattern: /CUST/i, function: 'Customer Record Layout' },
+      { pattern: /TRAN/i, function: 'Transaction Record Layout' },
+      { pattern: /USER/i, function: 'User Record Layout' },
+      { pattern: /XREF/i, function: 'Cross-Reference Layout' },
+      { pattern: /COMM|COMMON/i, function: 'Common Data Structures' },
+      { pattern: /DATE/i, function: 'Date Handling Structures' },
+      { pattern: /ERROR|ERR/i, function: 'Error Handling Structures' },
+    ];
+
+    for (const { pattern, function: func } of patterns) {
+      if (pattern.test(name)) {
+        return func;
+      }
+    }
+
+    return 'Data Structure Definition';
+  }
+
+  /**
+   * Extract COBOL program function from content
+   */
+  private extractCobolFunction(fullPath: string, fileName: string): string {
+    try {
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      const lines = content.split('\n').slice(0, 50); // Check first 50 lines
+
+      // Look for PROGRAM-ID comment or description
+      for (const line of lines) {
+        // Check for descriptive comments
+        if (line.match(/^\s*\*.*(?:PROGRAM|MODULE|ROUTINE).*(?:FOR|TO|:)/i)) {
+          const desc = line.replace(/^\s*\*+\s*/, '').trim();
+          if (desc.length > 10 && desc.length < 100) {
+            return desc;
+          }
+        }
+      }
+
+      // Infer from program name patterns
+      return this.inferCobolFunction(fileName);
+    } catch {
+      return this.inferCobolFunction(fileName);
+    }
+  }
+
+  /**
+   * Infer COBOL program function from name
+   */
+  private inferCobolFunction(fileName: string): string {
+    const name = fileName.toUpperCase();
+
+    const patterns: Array<{ pattern: RegExp; function: string }> = [
+      { pattern: /MENU/i, function: 'Main Menu Handler' },
+      { pattern: /SIGNON|LOGIN|LOGON/i, function: 'User Sign-on Processing' },
+      { pattern: /ACCTVIEW|ACTVW/i, function: 'Account View/Display' },
+      { pattern: /ACCTADD|ACTADD/i, function: 'Account Add/Create' },
+      { pattern: /ACCTUPD|ACTUPD/i, function: 'Account Update' },
+      { pattern: /CARDVIEW|CRDVW/i, function: 'Card View/Display' },
+      { pattern: /CARDADD|CRDADD/i, function: 'Card Add/Create' },
+      { pattern: /TRANVIEW|TRNVW/i, function: 'Transaction View' },
+      { pattern: /TRANADD|TRNADD/i, function: 'Transaction Add' },
+      { pattern: /REPORT|RPT/i, function: 'Report Generation' },
+      { pattern: /ADMIN/i, function: 'Administration Functions' },
+      { pattern: /BATCH|BAT/i, function: 'Batch Processing' },
+      { pattern: /UTIL/i, function: 'Utility Functions' },
+    ];
+
+    for (const { pattern, function: func } of patterns) {
+      if (pattern.test(name)) {
+        return func;
+      }
+    }
+
+    return 'COBOL Program';
   }
 
   /**
@@ -1119,6 +1361,105 @@ function getPageIcon(pageType: SuggestedPage['pageType']): string {
     default:
       return '📄';
   }
+}
+
+/**
+ * Generate a component summary table for a domain (DeepWiki style)
+ * Creates tables like: "Job | Program | Function" for batch jobs
+ */
+export function generateComponentTable(
+  domain: DiscoveredDomain,
+  options: { includeFilePath?: boolean } = {}
+): string {
+  const lines: string[] = [];
+  const components = domain.components.filter(c =>
+    c.type !== 'unknown' && c.function
+  );
+
+  if (components.length === 0) {
+    return '';
+  }
+
+  // Different table formats based on component types
+  const jobs = components.filter(c => c.type === 'job');
+  const screens = components.filter(c => c.type === 'screen');
+  const copybooks = components.filter(c => c.type === 'copybook');
+  const programs = components.filter(c => c.type === 'entrypoint' || c.type === 'service');
+
+  // Batch Components table (JCL jobs)
+  if (jobs.length > 0) {
+    lines.push('### Batch Components');
+    lines.push('');
+    lines.push('| Job | Program | Function |');
+    lines.push('|-----|---------|----------|');
+    for (const job of jobs) {
+      const jobName = job.name.toUpperCase();
+      const program = job.program || '-';
+      const func = job.function || '-';
+      lines.push(`| ${jobName} | ${program} | ${func} |`);
+    }
+    lines.push('');
+  }
+
+  // Screen Components table (BMS maps)
+  if (screens.length > 0) {
+    lines.push('### Screen Components');
+    lines.push('');
+    lines.push('| Screen | Function |');
+    lines.push('|--------|----------|');
+    for (const screen of screens) {
+      const screenName = screen.name.toUpperCase();
+      const func = screen.function || 'Screen Map';
+      lines.push(`| ${screenName} | ${func} |`);
+    }
+    lines.push('');
+  }
+
+  // Data Structures table (Copybooks)
+  if (copybooks.length > 0) {
+    lines.push('### Data Structures');
+    lines.push('');
+    lines.push('| Copybook | Purpose |');
+    lines.push('|----------|---------|');
+    for (const copybook of copybooks) {
+      const name = copybook.name.toUpperCase();
+      const func = copybook.function || 'Data Definition';
+      lines.push(`| ${name} | ${func} |`);
+    }
+    lines.push('');
+  }
+
+  // Program Components table
+  if (programs.length > 0) {
+    lines.push('### Program Components');
+    lines.push('');
+    lines.push('| Program | Function |');
+    lines.push('|---------|----------|');
+    for (const program of programs) {
+      const name = program.name.toUpperCase();
+      const func = program.function || 'Application Logic';
+      lines.push(`| ${name} | ${func} |`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Get all component tables for all domains in a discovery result
+ */
+export function generateAllComponentTables(result: DiscoveryResult): Map<string, string> {
+  const tables = new Map<string, string>();
+
+  for (const domain of result.domains) {
+    const table = generateComponentTable(domain);
+    if (table) {
+      tables.set(domain.id, table);
+    }
+  }
+
+  return tables;
 }
 
 export default CodebaseDiscovery;
